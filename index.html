@@ -17,8 +17,142 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <!-- jsPDF for Whiteboard PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <!-- Supabase JS Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- PEŁNOEKRANOWA INTERAKTYWNA TABLICA MATEMATYCZNA -->
+    <div id="whiteboard-overlay" class="fixed inset-0 z-50 bg-slate-100 hidden flex flex-col select-none">
+        <!-- Górny pasek narzędzi tablicy -->
+        <div class="bg-slate-900 text-white px-2.5 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 shrink-0">
+            <div class="flex items-center gap-2 min-w-0">
+                <button onclick="closeWhiteboard()" class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold flex items-center gap-1.5 shrink-0" title="Wróć (Wstecz)">
+                    <i class="fa-solid fa-arrow-left"></i>
+                    <span class="hidden sm:inline">Wróć</span>
+                </button>
+                <div class="min-w-0">
+                    <h3 id="wb-title" class="text-xs sm:text-sm font-bold truncate">Tablica lekcji</h3>
+                    <span id="wb-subtitle" class="text-[10px] text-slate-400 block truncate">Automatyczny zapis w chmurze</span>
+                </div>
+            </div>
+
+            <!-- Nawigacja stron + PDF -->
+            <div class="flex items-center gap-1.5 shrink-0">
+                <div class="flex items-center bg-slate-800 rounded-xl p-0.5 text-xs">
+                    <button onclick="wbChangePage(-1)" class="w-7 h-7 rounded-lg hover:bg-slate-700 flex items-center justify-center" title="Poprzednia strona">
+                        <i class="fa-solid fa-chevron-left text-[11px]"></i>
+                    </button>
+                    <span id="wb-page-indicator" class="px-2 font-bold text-[11px]">1 / 1</span>
+                    <button onclick="wbChangePage(1)" class="w-7 h-7 rounded-lg hover:bg-slate-700 flex items-center justify-center" title="Następna strona">
+                        <i class="fa-solid fa-chevron-right text-[11px]"></i>
+                    </button>
+                    <button onclick="wbAddPage()" class="px-2 h-7 rounded-lg bg-brand-600 hover:bg-brand-500 text-white font-semibold text-[11px] ml-0.5 flex items-center gap-1" title="Dodaj nową stronę">
+                        <i class="fa-solid fa-plus text-[10px]"></i> Strona
+                    </button>
+                </div>
+
+                <button onclick="exportCurrentBoardPDF()" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs" title="Pobierz całą tablicę jako PDF">
+                    <i class="fa-solid fa-file-pdf"></i>
+                    <span>PDF</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Drugi pasek: Przybory, Kształty, Kolory, Grubość, Tło, Cofnij/Ponów -->
+        <div class="bg-white border-b border-slate-200 px-2 sm:px-4 py-1.5 flex items-center gap-1.5 sm:gap-2 overflow-x-auto shrink-0">
+            <!-- Narzędzia rysowania -->
+            <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl shrink-0">
+                <button onclick="wbSetTool('pen')" data-wb-tool="pen" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white" title="Pisak">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button onclick="wbSetTool('highlighter')" data-wb-tool="highlighter" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Zakreślacz">
+                    <i class="fa-solid fa-highlighter"></i>
+                </button>
+                <button onclick="wbSetTool('eraser')" data-wb-tool="eraser" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Gumka (usuwa obiekt lub fragment)">
+                    <i class="fa-solid fa-eraser"></i>
+                </button>
+                <button onclick="wbSetTool('text')" data-wb-tool="text" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Tekst / Treść zadania">
+                    <i class="fa-solid fa-font"></i>
+                </button>
+            </div>
+
+            <!-- Kształty geometryczne -->
+            <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl shrink-0">
+                <button onclick="wbSetTool('line')" data-wb-tool="line" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Odcinek / Linia prosta">
+                    <i class="fa-solid fa-slash"></i>
+                </button>
+                <button onclick="wbSetTool('arrow')" data-wb-tool="arrow" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Wektor / Strzałka">
+                    <i class="fa-solid fa-arrow-right-long"></i>
+                </button>
+                <button onclick="wbSetTool('axes')" data-wb-tool="axes" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Układ współrzędnych XY">
+                    <i class="fa-solid fa-arrows-up-down-left-right"></i>
+                </button>
+                <button onclick="wbSetTool('rect')" data-wb-tool="rect" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Prostokąt">
+                    <i class="fa-regular fa-square"></i>
+                </button>
+                <button onclick="wbSetTool('circle')" data-wb-tool="circle" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Okrąg">
+                    <i class="fa-regular fa-circle"></i>
+                </button>
+                <button onclick="wbSetTool('triangle')" data-wb-tool="triangle" class="wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white" title="Trójkąt">
+                    <i class="fa-solid fa-play -rotate-90 text-[11px]"></i>
+                </button>
+            </div>
+
+            <!-- Auto-poprawianie odręcznych kształtów (Ink-to-Shape) -->
+            <button id="wb-autoshape-btn" onclick="wbToggleAutoShape()" class="px-2.5 py-1.5 rounded-xl border border-brand-300 bg-brand-50 text-brand-700 text-xs font-bold flex items-center gap-1.5 shrink-0" title="Automatycznie prostuje odręcznie rysowane linie, prostokąty, trójkąty i okręgi">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span class="hidden md:inline">Auto-kształty</span>
+            </button>
+
+            <!-- Paleta kolorów -->
+            <div class="flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-xl shrink-0">
+                <button onclick="wbSetColor('#0f172a')" data-wb-color="#0f172a" class="wb-color-btn w-5 h-5 rounded-full bg-slate-900 ring-2 ring-offset-1 ring-brand-600" title="Czarny"></button>
+                <button onclick="wbSetColor('#2563eb')" data-wb-color="#2563eb" class="wb-color-btn w-5 h-5 rounded-full bg-blue-600" title="Niebieski"></button>
+                <button onclick="wbSetColor('#dc2626')" data-wb-color="#dc2626" class="wb-color-btn w-5 h-5 rounded-full bg-red-600" title="Czerwony"></button>
+                <button onclick="wbSetColor('#16a34a')" data-wb-color="#16a34a" class="wb-color-btn w-5 h-5 rounded-full bg-green-600" title="Zielony"></button>
+                <button onclick="wbSetColor('#d97706')" data-wb-color="#d97706" class="wb-color-btn w-5 h-5 rounded-full bg-amber-600" title="Pomarańczowy"></button>
+                <button onclick="wbSetColor('#9333ea')" data-wb-color="#9333ea" class="wb-color-btn w-5 h-5 rounded-full bg-purple-600" title="Fioletowy"></button>
+                <button onclick="wbSetColor('#ffffff')" data-wb-color="#ffffff" class="wb-color-btn w-5 h-5 rounded-full bg-white border border-slate-300" title="Biały (do ciemnej tablicy)"></button>
+            </div>
+
+            <!-- Grubość linii -->
+            <select id="wb-stroke-width" onchange="wbSetWidth(this.value)" class="bg-slate-100 border border-slate-200 rounded-xl px-2 py-1.5 text-xs font-semibold text-slate-700 shrink-0" title="Grubość pisaka">
+                <option value="2">Cienki (2px)</option>
+                <option value="3" selected>Średni (3px)</option>
+                <option value="6">Gruby (6px)</option>
+                <option value="14">Marker (14px)</option>
+            </select>
+
+            <!-- Tło arkusza -->
+            <select id="wb-bg-select" onchange="wbSetBackground(this.value)" class="bg-slate-100 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 shrink-0" title="Tło tablicy">
+                <option value="grid">Kratka (5mm)</option>
+                <option value="dots">Kropki</option>
+                <option value="lines">Linie</option>
+                <option value="blank">Gładka biel</option>
+                <option value="dark">Ciemna tablica</option>
+            </select>
+
+            <!-- Cofnij / Ponów / Wyczyść stronę -->
+            <div class="flex items-center gap-1 ml-auto shrink-0">
+                <button onclick="wbUndo()" class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold" title="Cofnij (Ctrl+Z)">
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
+                <button onclick="wbRedo()" class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold" title="Ponów (Ctrl+Y)">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+                <button onclick="wbClearCurrentPage()" class="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold" title="Wyczyść bieżącą stronę">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Obszar płótna (Canvas) -->
+        <div id="wb-canvas-wrapper" class="flex-1 relative overflow-hidden touch-none cursor-crosshair bg-white">
+            <canvas id="wb-canvas" class="block w-full h-full touch-none"></canvas>
+        </div>
+    </div>
+
     <script>
         // Dynamiczny Manifest PWA + ikona aplikacji (do instalacji na ekranie głównym bez paska przeglądarki)
         (function setupPWA() {
@@ -145,6 +279,10 @@
                 <button onclick="switchTab('schedule')" data-nav="schedule" class="nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all">
                     <i class="fa-regular fa-calendar-days w-5 text-center"></i>
                     Kalendarz
+                </button>
+                <button onclick="switchTab('boards')" data-nav="boards" class="nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all">
+                    <i class="fa-solid fa-chalkboard-user w-5 text-center"></i>
+                    Tablice
                 </button>
                 <button onclick="switchTab('students')" data-nav="students" class="nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-all">
                     <i class="fa-solid fa-user-graduate w-5 text-center"></i>
@@ -564,6 +702,36 @@
                     </div>
                 </section>
 
+
+                <!-- 7. MODUŁ TABLICE (INTERAKTYWNA TABLICA MATEMATYCZNA Z EKSPORTEM PDF) -->
+                <section id="view-boards" class="tab-view hidden space-y-5 fade-in min-w-0">
+                    <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <h2 class="font-bold text-base sm:text-lg text-slate-900 flex items-center gap-2">
+                                    <i class="fa-solid fa-chalkboard-user text-brand-600"></i> Tablice do lekcji
+                                </h2>
+                                <p class="text-xs text-slate-500">Każda lekcja ma własną wielostronicową tablicę z automatycznym prostowaniem figur i eksportem do PDF.</p>
+                            </div>
+                            <button onclick="createStandaloneBoard()" class="bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-2xs flex items-center justify-center gap-1.5 shrink-0">
+                                <i class="fa-solid fa-plus"></i> Nowa luźna tablica
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-slate-100">
+                            <div class="relative sm:col-span-2">
+                                <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                                <input type="text" id="boards-search" oninput="renderBoardsList()" placeholder="Szukaj po uczniu, temacie lub dacie lekcji..." class="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                            </div>
+                            <select id="boards-filter-student" onchange="renderBoardsList()" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:ring-2 focus:ring-brand-500 outline-none">
+                                <option value="all">Wszyscy uczniowie</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="boards-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+                </section>
+
                 <!-- 6. USTAWIENIA I KOPIA ZAPASOWA -->
                 <section id="view-settings" class="tab-view hidden space-y-5 sm:space-y-6 fade-in min-w-0">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 min-w-0">
@@ -644,15 +812,26 @@
                                 </div>
                             </div>
 
-                            <div class="bg-rose-50/70 p-4 sm:p-6 rounded-2xl border border-rose-200 space-y-3 min-w-0">
-                                <h4 class="font-bold text-sm text-rose-800">Konto i resetowanie danych</h4>
-                                <p class="text-xs text-rose-600">Możesz wylogować się z obecnego urządzenia lub wyczyścić bazę danych w chmurze.</p>
-                                <div class="flex flex-wrap gap-2">
-                                    <button onclick="handleSupabaseLogout()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2.5 rounded-xl">
-                                        <i class="fa-solid fa-right-from-bracket mr-1"></i> Wyloguj się
+                            <div class="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-3 min-w-0">
+                                <h4 class="font-bold text-sm text-slate-900 flex items-center gap-2">
+                                    <i class="fa-solid fa-user-lock text-slate-500"></i> Sesja konta
+                                </h4>
+                                <p class="text-xs text-slate-500">Wylogowanie kończy sesję tylko na tym urządzeniu — Twoje dane w chmurze pozostają nienaruszone.</p>
+                                <div>
+                                    <button onclick="handleSupabaseLogout()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5">
+                                        <i class="fa-solid fa-right-from-bracket"></i> Wyloguj się
                                     </button>
-                                    <button onclick="openClearDataModal()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl">
-                                        Wyczyść wszystkie dane
+                                </div>
+                            </div>
+
+                            <div class="bg-rose-50/70 p-4 sm:p-6 rounded-2xl border-2 border-dashed border-rose-300 space-y-3 min-w-0 mt-6">
+                                <h4 class="font-bold text-sm text-rose-800 flex items-center gap-2">
+                                    <i class="fa-solid fa-triangle-exclamation text-rose-600"></i> Strefa niebezpieczna — Reset bazy danych
+                                </h4>
+                                <p class="text-xs text-rose-700 leading-relaxed">Trwałe usunięcie wszystkich uczniów, lekcji, wpłat oraz tablic z lokalnej pamięci i chmury. Operacja wymaga potwierdzenia słowem <strong>USUŃ</strong>.</p>
+                                <div class="pt-1">
+                                    <button onclick="openClearDataModal()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-2xs">
+                                        <i class="fa-solid fa-trash-can"></i> Wyczyść wszystkie dane...
                                     </button>
                                 </div>
                             </div>
@@ -672,6 +851,10 @@
             <button onclick="switchTab('schedule')" data-nav="schedule" class="nav-btn-mob flex flex-col items-center justify-center flex-1 py-1 text-slate-400">
                 <i class="fa-regular fa-calendar-days text-sm"></i>
                 <span class="text-[9px] font-medium mt-0.5">Kalendarz</span>
+            </button>
+            <button onclick="switchTab('boards')" data-nav="boards" class="nav-btn-mob flex flex-col items-center justify-center flex-1 py-1 text-slate-400">
+                <i class="fa-solid fa-chalkboard-user text-sm"></i>
+                <span class="text-[9px] font-medium mt-0.5">Tablice</span>
             </button>
             <button onclick="switchTab('students')" data-nav="students" class="nav-btn-mob flex flex-col items-center justify-center flex-1 py-1 text-slate-400">
                 <i class="fa-solid fa-user-graduate text-sm"></i>
@@ -1076,13 +1259,19 @@
     </div>
 
     <!-- Modal: Potwierdzenie czyszczenia danych -->
-    <div id="modal-clear" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-40 hidden flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-        <div class="bg-white rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-xl space-y-4">
-            <h3 class="font-bold text-lg text-slate-900">Wyczyścić wszystkie dane?</h3>
-            <p class="text-xs text-slate-500 leading-relaxed">Tej operacji nie można cofnąć. Upewnij się, że masz pobraną kopię zapasową JSON.</p>
+    <div id="modal-clear" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-xl space-y-4 border border-rose-200">
+            <div class="flex items-center gap-2.5 text-rose-700">
+                <div class="w-9 h-9 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <h3 class="font-bold text-base sm:text-lg text-slate-900">Wyczyścić wszystkie dane?</h3>
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed">Tej operacji nie można cofnąć — usuniesz całą historię lekcji, wpłat, uczniów i tablic. Aby potwierdzić, wpisz poniżej słowo <strong class="text-rose-700">USUŃ</strong>:</p>
+            <input type="text" id="clear-confirm-input" oninput="validateClearConfirmInput()" placeholder="Wpisz: USUŃ" autocomplete="off" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold tracking-wider uppercase focus:ring-2 focus:ring-rose-500 outline-none">
             <div class="flex justify-end gap-2 pt-2">
                 <button onclick="closeModal('modal-clear')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Anuluj</button>
-                <button onclick="confirmClearAllData()" class="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-xl">Tak, wyczyść</button>
+                <button id="btn-confirm-clear-all" disabled onclick="confirmClearAllData()" class="px-4 py-2 text-xs font-semibold bg-rose-600 disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-rose-700 text-white rounded-xl transition-all">Tak, wyczyść bazę</button>
             </div>
         </div>
     </div>
@@ -1368,7 +1557,8 @@
                 { id: 'ex_1', studentId: 'stu_1', title: 'Diagnoza wstępna E8', date: addDaysISO(todayObj, -30), percent: 56 },
                 { id: 'ex_2', studentId: 'stu_1', title: 'Arkusz próbny CKE', date: addDaysISO(todayObj, -10), percent: 72 },
                 { id: 'ex_3', studentId: 'stu_2', title: 'Matura Rozszerzona - Próbna', date: addDaysISO(todayObj, -14), percent: 68 }
-            ]
+            ],
+            whiteboards: {}
         };
 
         let state = loadState();
@@ -1391,7 +1581,8 @@
                     students: parsed.students || [],
                     groups: parsed.groups || [],
                     lessons: parsed.lessons || [],
-                    examScores: parsed.examScores || []
+                    examScores: parsed.examScores || [],
+                    whiteboards: parsed.whiteboards || {}
                 };
             } catch (e) {
                 return JSON.parse(JSON.stringify(defaultState));
@@ -1477,7 +1668,8 @@
                         students: data.data.students || [],
                         groups: data.data.groups || [],
                         lessons: data.data.lessons || [],
-                        examScores: data.data.examScores || []
+                        examScores: data.data.examScores || [],
+                        whiteboards: data.data.whiteboards || {}
                     };
                     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
                     runAcademicYearPromotion();
@@ -1598,6 +1790,7 @@
         }
 
         async function initAuthAndApp() {
+            initMobileBackNavigation();
             runAcademicYearPromotion();
             populateDashboardYears();
             populateLessonDropdowns();
@@ -1669,14 +1862,94 @@
             }, 3400);
         }
 
-        function openModal(id) {
-            const el = document.getElementById(id);
-            if (el) el.classList.remove('hidden');
+        // ==================== OBSŁUGA SYSTEMOWEGO PRZYCISKU WSTECZ (MOBILE / PWA) ====================
+        let isHandlingPopState = false;
+        let lastExitWarningTime = 0;
+
+        function pushNavHistory(entry) {
+            if (isHandlingPopState) return;
+            try {
+                window.history.pushState({ mathflow: true, ...entry }, '');
+            } catch (e) {}
         }
 
-        function closeModal(id) {
+        function getOpenModalIds() {
+            const modalIds = [
+                'modal-lesson', 'modal-payment', 'modal-student', 'modal-group',
+                'modal-note', 'modal-exam', 'modal-blik', 'modal-clear', 'modal-student-details'
+            ];
+            return modalIds.filter(id => {
+                const el = document.getElementById(id);
+                return el && !el.classList.contains('hidden');
+            });
+        }
+
+        function initMobileBackNavigation() {
+            try {
+                window.history.replaceState({ mathflow: true, tab: 'dashboard', root: true }, '');
+                window.history.pushState({ mathflow: true, tab: 'dashboard' }, '');
+            } catch (e) {}
+
+            window.addEventListener('popstate', (event) => {
+                isHandlingPopState = true;
+                try {
+                    // 1. Jeśli otwarta jest tablica pełnoekranowa — zamknij ją
+                    const wbEl = document.getElementById('whiteboard-overlay');
+                    if (wbEl && !wbEl.classList.contains('hidden')) {
+                        closeWhiteboard(true);
+                        return;
+                    }
+
+                    // 2. Jeśli otwarty jest dowolny modal — zamknij najnowszy
+                    const openModals = getOpenModalIds();
+                    if (openModals.length > 0) {
+                        const topModal = openModals[openModals.length - 1];
+                        const el = document.getElementById(topModal);
+                        if (el) el.classList.add('hidden');
+                        return;
+                    }
+
+                    // 3. Jeśli jest wpisana poprzednia zakładka w historii — przełącz do niej
+                    const targetTab = event.state && event.state.tab ? event.state.tab : 'dashboard';
+                    if (activeTab !== targetTab) {
+                        switchTab(targetTab, true);
+                        return;
+                    }
+
+                    // 4. Jesteśmy na głównym ekranie (Pulpit) — zapobiegaj przypadkowemu wyjściu na pulpit telefonu
+                    const now = Date.now();
+                    if (now - lastExitWarningTime > 2500) {
+                        lastExitWarningTime = now;
+                        showToast('Naciśnij Wstecz ponownie, aby zamknąć aplikację.', 'info');
+                        window.history.pushState({ mathflow: true, tab: activeTab }, '');
+                    }
+                } finally {
+                    isHandlingPopState = false;
+                }
+            });
+        }
+
+        function openModal(id) {
             const el = document.getElementById(id);
-            if (el) el.classList.add('hidden');
+            if (el) {
+                const wasHidden = el.classList.contains('hidden');
+                el.classList.remove('hidden');
+                if (wasHidden) {
+                    pushNavHistory({ modal: id, tab: activeTab });
+                }
+            }
+        }
+
+        function closeModal(id, fromPopState = false) {
+            const el = document.getElementById(id);
+            if (el && !el.classList.contains('hidden')) {
+                el.classList.add('hidden');
+                if (!fromPopState && !isHandlingPopState && window.history.state && window.history.state.modal === id) {
+                    isHandlingPopState = true;
+                    try { window.history.back(); } catch (e) {}
+                    setTimeout(() => { isHandlingPopState = false; }, 60);
+                }
+            }
         }
 
         function updateLevelSelectors(prefix, presetLevel = null) {
@@ -1785,13 +2058,15 @@
         const TAB_TITLES = {
             dashboard: 'Pulpit i Ewidencja',
             schedule: 'Kalendarz',
+            boards: 'Tablice do lekcji',
             students: 'Uczniowie i Grupy',
             billing: 'Wpłaty i Rozliczenia',
             progress: 'Postępy i Arkusze',
             settings: 'Ustawienia i Kopia'
         };
 
-        function switchTab(tabName) {
+        function switchTab(tabName, fromPopState = false) {
+            const prevTab = activeTab;
             activeTab = tabName;
             document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
             const target = document.getElementById(`view-${tabName}`);
@@ -1814,12 +2089,17 @@
                     : 'nav-btn-mob flex flex-col items-center justify-center flex-1 py-1 text-slate-400';
             });
 
+            if (!fromPopState && prevTab !== tabName) {
+                pushNavHistory({ tab: tabName });
+            }
+
             renderCurrentView();
         }
 
         function renderCurrentView() {
             if (activeTab === 'dashboard') renderDashboard();
             else if (activeTab === 'schedule') renderSchedule();
+            else if (activeTab === 'boards') renderBoardsList();
             else if (activeTab === 'students') renderStudents();
             else if (activeTab === 'billing') renderBilling();
             else if (activeTab === 'progress') renderProgress();
@@ -2351,6 +2631,7 @@
                                 </div>
                                 <div class="flex flex-wrap items-center gap-1.5 pt-1">
                                     ${matchingLesson.status !== 'completed' ? `<button onclick="markLessonCompleted('${matchingLesson.id}')" class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold">Oznacz jako odbytą</button>` : `<span class="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold">Odbyta</span>`}
+                                    <button onclick="openWhiteboardForLesson('${matchingLesson.id}')" class="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-semibold flex items-center gap-1"><i class="fa-solid fa-chalkboard-user text-[10px]"></i> Tablica</button>
                                     <button onclick="openGoogleMeetForLesson('${matchingLesson.id}')" class="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-semibold flex items-center gap-1"><i class="fa-solid fa-video text-[10px]"></i> Meet</button>
                                     <button onclick="openNoteModal('${matchingLesson.id}')" class="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-[11px] font-semibold">Notatka</button>
                                 </div>
@@ -2936,8 +3217,13 @@
                                             </div>
                                             ${l.topic ? `<p class="text-slate-600 mt-0.5 truncate">${escapeHTML(l.topic)}</p>` : ''}
                                         </div>
-                                        <div class="flex sm:flex-col items-center sm:items-end justify-between gap-1 shrink-0">
-                                            <span class="font-extrabold text-slate-800">${l.status === 'cancelled' ? '0,00 zł' : formatMoney(price)}</span>
+                                        <div class="flex sm:flex-col items-center sm:items-end justify-between gap-1.5 shrink-0">
+                                            <div class="flex items-center gap-2">
+                                                <button onclick="closeModal('modal-student-details'); openWhiteboardForLesson('${l.id}')" class="px-2 py-1 rounded-lg bg-brand-50 hover:bg-brand-100 text-brand-700 text-[10px] font-bold flex items-center gap-1">
+                                                    <i class="fa-solid fa-chalkboard-user"></i> Tablica
+                                                </button>
+                                                <span class="font-extrabold text-slate-800">${l.status === 'cancelled' ? '0,00 zł' : formatMoney(price)}</span>
+                                            </div>
                                             ${paymentInfo}
                                         </div>
                                     </div>
@@ -3576,17 +3862,30 @@
         }
 
         function openClearDataModal() {
+            const inp = document.getElementById('clear-confirm-input');
+            const btn = document.getElementById('btn-confirm-clear-all');
+            if (inp) inp.value = '';
+            if (btn) btn.disabled = true;
             openModal('modal-clear');
         }
 
+        function validateClearConfirmInput() {
+            const val = (document.getElementById('clear-confirm-input')?.value || '').trim().toUpperCase();
+            const btn = document.getElementById('btn-confirm-clear-all');
+            if (btn) btn.disabled = (val !== 'USUŃ' && val !== 'USUN');
+        }
+
         function confirmClearAllData() {
+            const val = (document.getElementById('clear-confirm-input')?.value || '').trim().toUpperCase();
+            if (val !== 'USUŃ' && val !== 'USUN') return;
             state = {
                 ...JSON.parse(JSON.stringify(defaultState)),
                 students: [],
                 groups: [],
                 payments: [],
                 lessons: [],
-                examScores: []
+                examScores: [],
+                whiteboards: {}
             };
             saveState();
             closeModal('modal-clear');
@@ -3595,10 +3894,846 @@
             showToast('Wyczyszczono wszystkie dane.', 'info');
         }
 
+
+        // ==================== 7. MODUŁ TABLICE (INTERAKTYWNA TABLICA + AUTO-KSZTAŁTY + PDF) ====================
+        let wbCurrentBoardId = null;
+        let wbCurrentPageIdx = 0;
+        let wbTool = 'pen';
+        let wbColor = '#0f172a';
+        let wbWidth = 3;
+        let wbAutoShape = true;
+        let wbIsDrawing = false;
+        let wbActiveStroke = null;
+        let wbRedoStack = [];
+        let wbSaveDebounce = null;
+
+        function ensureWhiteboardsStore() {
+            if (!state.whiteboards || typeof state.whiteboards !== 'object') {
+                state.whiteboards = {};
+            }
+        }
+
+        function getOrCreateBoardForLesson(lessonId) {
+            ensureWhiteboardsStore();
+            const les = state.lessons.find(l => l.id === lessonId);
+            if (!state.whiteboards[lessonId]) {
+                state.whiteboards[lessonId] = {
+                    id: lessonId,
+                    lessonId: lessonId,
+                    title: les ? `${getLessonDisplayTitle(les)} (${les.date})` : 'Tablica lekcji',
+                    subtitle: les?.topic || 'Notatki z zajęć',
+                    updatedAt: new Date().toISOString(),
+                    pages: [
+                        { bg: 'grid', strokes: [] }
+                    ]
+                };
+            }
+            return state.whiteboards[lessonId];
+        }
+
+        function createStandaloneBoard() {
+            ensureWhiteboardsStore();
+            const id = 'wb_' + Date.now();
+            const todayStr = formatDateISO(new Date());
+            state.whiteboards[id] = {
+                id,
+                lessonId: null,
+                title: `Tablica robocza (${todayStr})`,
+                subtitle: 'Luźne notatki i zadania',
+                updatedAt: new Date().toISOString(),
+                pages: [{ bg: 'grid', strokes: [] }]
+            };
+            saveState();
+            openWhiteboardById(id);
+        }
+
+        function deleteBoard(boardId) {
+            ensureWhiteboardsStore();
+            delete state.whiteboards[boardId];
+            saveState();
+            renderBoardsList();
+            showToast('Usunięto tablicę.', 'info');
+        }
+
+        function renderBoardsList() {
+            ensureWhiteboardsStore();
+            const grid = document.getElementById('boards-grid');
+            if (!grid) return;
+
+            const stuSel = document.getElementById('boards-filter-student');
+            if (stuSel) {
+                const prev = stuSel.value;
+                stuSel.innerHTML = '<option value="all">Wszyscy uczniowie</option>' +
+                    state.students.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('');
+                if ([...stuSel.options].some(o => o.value === prev)) stuSel.value = prev;
+            }
+
+            const q = (document.getElementById('boards-search')?.value || '').toLowerCase().trim();
+            const stuFilter = document.getElementById('boards-filter-student')?.value || 'all';
+
+            // Zbuduj połączoną listę: wszystkie lekcje (od najnowszych) + luźne tablice
+            const items = [];
+
+            state.lessons
+                .slice()
+                .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
+                .forEach(l => {
+                    if (stuFilter !== 'all' && !(l.participants || []).some(p => p.studentId === stuFilter)) return;
+                    const title = getLessonDisplayTitle(l);
+                    const topic = l.topic || '';
+                    if (q && !`${title} ${topic} ${l.date}`.toLowerCase().includes(q)) return;
+
+                    const wb = state.whiteboards[l.id];
+                    const pagesCount = wb ? (wb.pages?.length || 1) : 1;
+                    const strokesCount = wb ? (wb.pages || []).reduce((acc, p) => acc + (p.strokes?.length || 0), 0) : 0;
+
+                    items.push({
+                        boardId: l.id,
+                        isLesson: true,
+                        lessonId: l.id,
+                        title,
+                        date: `${l.date} • ${l.time}`,
+                        topic: topic || 'Brak wpisanego tematu',
+                        status: l.status,
+                        pagesCount,
+                        strokesCount,
+                        hasContent: strokesCount > 0
+                    });
+                });
+
+            Object.values(state.whiteboards).forEach(wb => {
+                if (!wb.lessonId && stuFilter === 'all') {
+                    if (q && !`${wb.title} ${wb.subtitle || ''}`.toLowerCase().includes(q)) return;
+                    const pagesCount = wb.pages?.length || 1;
+                    const strokesCount = (wb.pages || []).reduce((acc, p) => acc + (p.strokes?.length || 0), 0);
+                    items.push({
+                        boardId: wb.id,
+                        isLesson: false,
+                        lessonId: null,
+                        title: wb.title,
+                        date: (wb.updatedAt || '').slice(0, 10),
+                        topic: wb.subtitle || 'Luźna tablica',
+                        status: 'standalone',
+                        pagesCount,
+                        strokesCount,
+                        hasContent: strokesCount > 0
+                    });
+                }
+            });
+
+            if (items.length === 0) {
+                grid.innerHTML = '<div class="col-span-full bg-white p-8 rounded-2xl border border-slate-200 text-center text-xs text-slate-400">Brak lekcji lub tablic spełniających kryteria.</div>';
+                return;
+            }
+
+            grid.innerHTML = items.map(item => `
+                <div class="bg-white p-4 sm:p-5 rounded-2xl border ${item.hasContent ? 'border-brand-200' : 'border-slate-200'} shadow-2xs flex flex-col justify-between gap-4 hover:shadow-md transition-all">
+                    <div class="space-y-2 min-w-0">
+                        <div class="flex items-start justify-between gap-2">
+                            <span class="text-[11px] font-bold text-brand-600">${escapeHTML(item.date)}</span>
+                            ${item.hasContent
+                                ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">${item.pagesCount} str. • ${item.strokesCount} elem.</span>`
+                                : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">Pusta tablica</span>`
+                            }
+                        </div>
+                        <h3 class="font-extrabold text-sm sm:text-base text-slate-900 truncate">${escapeHTML(item.title)}</h3>
+                        <p class="text-xs text-slate-500 line-clamp-2">${escapeHTML(item.topic)}</p>
+                    </div>
+
+                    <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <button onclick="${item.isLesson ? `openWhiteboardForLesson('${item.lessonId}')` : `openWhiteboardById('${item.boardId}')`}" class="flex-1 py-2 px-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-2xs">
+                            <i class="fa-solid fa-pen-nib"></i> Otwórz tablicę
+                        </button>
+                        <button onclick="${item.isLesson ? `exportLessonBoardPDF('${item.lessonId}')` : `exportBoardPDFById('${item.boardId}')`}" class="py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center gap-1" title="Pobierz notatkę PDF">
+                            <i class="fa-solid fa-file-pdf"></i> PDF
+                        </button>
+                        ${!item.isLesson ? `
+                            <button onclick="deleteBoard('${item.boardId}')" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-rose-50 text-rose-500 flex items-center justify-center" title="Usuń tablicę">
+                                <i class="fa-solid fa-trash text-xs"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function openWhiteboardForLesson(lessonId) {
+            const board = getOrCreateBoardForLesson(lessonId);
+            const les = state.lessons.find(l => l.id === lessonId);
+            if (les) {
+                board.title = `${getLessonDisplayTitle(les)} (${les.date})`;
+                board.subtitle = les.topic || 'Notatki z lekcji';
+            }
+            openWhiteboardById(board.id);
+        }
+
+        function openWhiteboardById(boardId) {
+            ensureWhiteboardsStore();
+            const board = state.whiteboards[boardId];
+            if (!board) return;
+
+            wbCurrentBoardId = boardId;
+            wbCurrentPageIdx = 0;
+            wbRedoStack = [];
+
+            document.getElementById('wb-title').textContent = board.title || 'Tablica lekcji';
+            document.getElementById('wb-subtitle').textContent = board.subtitle || 'Notatki z zajęć';
+
+            const overlay = document.getElementById('whiteboard-overlay');
+            const wasHidden = overlay.classList.contains('hidden');
+            overlay.classList.remove('hidden');
+            if (wasHidden) {
+                pushNavHistory({ whiteboard: boardId, tab: activeTab });
+            }
+
+            wbSyncPageControls();
+            setTimeout(() => {
+                wbResizeCanvas();
+                wbRedrawCanvas();
+            }, 20);
+        }
+
+        function closeWhiteboard(fromPopState = false) {
+            const overlay = document.getElementById('whiteboard-overlay');
+            if (overlay && !overlay.classList.contains('hidden')) {
+                overlay.classList.add('hidden');
+                wbCurrentBoardId = null;
+                saveState();
+                if (activeTab === 'boards') renderBoardsList();
+
+                if (!fromPopState && !isHandlingPopState && window.history.state && window.history.state.whiteboard) {
+                    isHandlingPopState = true;
+                    try { window.history.back(); } catch (e) {}
+                    setTimeout(() => { isHandlingPopState = false; }, 60);
+                }
+            }
+        }
+
+        function wbGetCurrentPage() {
+            const board = state.whiteboards?.[wbCurrentBoardId];
+            if (!board) return null;
+            if (!board.pages || board.pages.length === 0) {
+                board.pages = [{ bg: 'grid', strokes: [] }];
+            }
+            if (wbCurrentPageIdx >= board.pages.length) wbCurrentPageIdx = board.pages.length - 1;
+            if (wbCurrentPageIdx < 0) wbCurrentPageIdx = 0;
+            return board.pages[wbCurrentPageIdx];
+        }
+
+        function wbSyncPageControls() {
+            const board = state.whiteboards?.[wbCurrentBoardId];
+            const page = wbGetCurrentPage();
+            if (!board || !page) return;
+            document.getElementById('wb-page-indicator').textContent = `${wbCurrentPageIdx + 1} / ${board.pages.length}`;
+            document.getElementById('wb-bg-select').value = page.bg || 'grid';
+        }
+
+        function wbChangePage(delta) {
+            const board = state.whiteboards?.[wbCurrentBoardId];
+            if (!board) return;
+            const next = wbCurrentPageIdx + delta;
+            if (next < 0 || next >= board.pages.length) return;
+            wbCurrentPageIdx = next;
+            wbRedoStack = [];
+            wbSyncPageControls();
+            wbRedrawCanvas();
+        }
+
+        function wbAddPage() {
+            const board = state.whiteboards?.[wbCurrentBoardId];
+            const cur = wbGetCurrentPage();
+            if (!board) return;
+            board.pages.push({ bg: cur ? cur.bg : 'grid', strokes: [] });
+            wbCurrentPageIdx = board.pages.length - 1;
+            wbRedoStack = [];
+            wbSyncPageControls();
+            wbRedrawCanvas();
+            wbScheduleSave();
+            showToast(`Dodano stronę ${wbCurrentPageIdx + 1}.`, 'info');
+        }
+
+        function wbSetTool(tool) {
+            wbTool = tool;
+            document.querySelectorAll('.wb-tool-btn').forEach(btn => {
+                const active = btn.dataset.wbTool === tool;
+                btn.className = active
+                    ? 'wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white'
+                    : 'wb-tool-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white';
+            });
+        }
+
+        function wbSetColor(hex) {
+            wbColor = hex;
+            document.querySelectorAll('.wb-color-btn').forEach(btn => {
+                const active = btn.dataset.wbColor === hex;
+                btn.className = active
+                    ? 'wb-color-btn w-5 h-5 rounded-full border border-slate-300 ring-2 ring-offset-1 ring-brand-600'
+                    : 'wb-color-btn w-5 h-5 rounded-full border border-slate-300';
+            });
+            if (wbTool === 'eraser') wbSetTool('pen');
+        }
+
+        function wbSetWidth(w) {
+            wbWidth = Number(w) || 3;
+        }
+
+        function wbSetBackground(bg) {
+            const page = wbGetCurrentPage();
+            if (!page) return;
+            page.bg = bg;
+            if (bg === 'dark' && wbColor === '#0f172a') {
+                wbSetColor('#ffffff');
+            } else if (bg !== 'dark' && wbColor === '#ffffff') {
+                wbSetColor('#0f172a');
+            }
+            wbRedrawCanvas();
+            wbScheduleSave();
+        }
+
+        function wbToggleAutoShape() {
+            wbAutoShape = !wbAutoShape;
+            const btn = document.getElementById('wb-autoshape-btn');
+            if (btn) {
+                btn.className = wbAutoShape
+                    ? 'px-2.5 py-1.5 rounded-xl border border-brand-300 bg-brand-50 text-brand-700 text-xs font-bold flex items-center gap-1.5 shrink-0'
+                    : 'px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-slate-500 text-xs font-semibold flex items-center gap-1.5 shrink-0';
+            }
+            showToast(wbAutoShape ? 'Auto-poprawianie kształtów: WŁĄCZONE' : 'Auto-poprawianie kształtów: WYŁĄCZONE', 'info');
+        }
+
+        function wbUndo() {
+            const page = wbGetCurrentPage();
+            if (!page || page.strokes.length === 0) return;
+            const removed = page.strokes.pop();
+            wbRedoStack.push(removed);
+            wbRedrawCanvas();
+            wbScheduleSave();
+        }
+
+        function wbRedo() {
+            const page = wbGetCurrentPage();
+            if (!page || wbRedoStack.length === 0) return;
+            const restored = wbRedoStack.pop();
+            page.strokes.push(restored);
+            wbRedrawCanvas();
+            wbScheduleSave();
+        }
+
+        function wbClearCurrentPage() {
+            const page = wbGetCurrentPage();
+            if (!page || page.strokes.length === 0) return;
+            page.strokes = [];
+            wbRedoStack = [];
+            wbRedrawCanvas();
+            wbScheduleSave();
+            showToast('Wyczyszczono bieżącą stronę.', 'info');
+        }
+
+        function wbScheduleSave() {
+            const board = state.whiteboards?.[wbCurrentBoardId];
+            if (board) board.updatedAt = new Date().toISOString();
+            clearTimeout(wbSaveDebounce);
+            wbSaveDebounce = setTimeout(() => {
+                saveState();
+            }, 600);
+        }
+
+        // Rozpoznawanie odręcznych kształtów geometrycznych (Ink-to-Shape)
+        function recognizeHandDrawnShape(points) {
+            if (!points || points.length < 8) return null;
+
+            const first = points[0];
+            const last = points[points.length - 1];
+            let pathLen = 0;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.y > maxY) maxY = p.y;
+                if (i > 0) {
+                    pathLen += Math.hypot(p.x - points[i - 1].x, p.y - points[i - 1].y);
+                }
+            }
+
+            const width = maxX - minX;
+            const height = maxY - minY;
+            const diag = Math.hypot(width, height);
+            if (diag < 28 || pathLen < 25) return null;
+
+            const endDist = Math.hypot(last.x - first.x, last.y - first.y);
+
+            // 1. Linia prosta (odcinek)
+            if (endDist / pathLen > 0.91) {
+                let x1 = first.x, y1 = first.y, x2 = last.x, y2 = last.y;
+                // Przyciąganie do poziomu / pionu przy małym odchyleniu
+                if (Math.abs(y2 - y1) < 12) y2 = y1;
+                if (Math.abs(x2 - x1) < 12) x2 = x1;
+                return { type: 'line', x1, y1, x2, y2 };
+            }
+
+            // 2. Kształty zamknięte (okrąg, prostokąt, trójkąt)
+            const isClosed = endDist < Math.max(36, diag * 0.24);
+            if (!isClosed) return null;
+
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+            const rx = width / 2;
+            const ry = height / 2;
+
+            // Sprawdź dopasowanie do elipsy/okręgu
+            if (rx > 12 && ry > 12) {
+                let radialErrSum = 0;
+                for (const p of points) {
+                    const nx = (p.x - cx) / rx;
+                    const ny = (p.y - cy) / ry;
+                    const r = Math.hypot(nx, ny);
+                    radialErrSum += Math.abs(r - 1);
+                }
+                const meanRadialErr = radialErrSum / points.length;
+                if (meanRadialErr < 0.13) {
+                    const avgR = (rx + ry) / 2;
+                    return { type: 'circle', x1: cx - avgR, y1: cy - avgR, x2: cx + avgR, y2: cy + avgR };
+                }
+            }
+
+            // Policz narożniki (zmiany kierunku o > 42 deg po uproszczeniu)
+            const step = Math.max(2, Math.floor(points.length / 28));
+            const sampled = [];
+            for (let i = 0; i < points.length; i += step) sampled.push(points[i]);
+
+            let corners = 0;
+            for (let i = 1; i < sampled.length - 1; i++) {
+                const v1x = sampled[i].x - sampled[i - 1].x;
+                const v1y = sampled[i].y - sampled[i - 1].y;
+                const v2x = sampled[i + 1].x - sampled[i].x;
+                const v2y = sampled[i + 1].y - sampled[i].y;
+                const l1 = Math.hypot(v1x, v1y);
+                const l2 = Math.hypot(v2x, v2y);
+                if (l1 > 6 && l2 > 6) {
+                    const cosA = (v1x * v2x + v1y * v2y) / (l1 * l2);
+                    const angle = Math.acos(Math.max(-1, Math.min(1, cosA))) * (180 / Math.PI);
+                    if (angle > 52) corners++;
+                }
+            }
+
+            // 3. Trójkąt vs Prostokąt
+            if (corners >= 2 && corners <= 3) {
+                return { type: 'triangle', x1: minX, y1: minY, x2: maxX, y2: maxY };
+            }
+            if (corners >= 3 && corners <= 6) {
+                return { type: 'rect', x1: minX, y1: minY, x2: maxX, y2: maxY };
+            }
+
+            return null;
+        }
+
+        function wbResizeCanvas() {
+            const wrapper = document.getElementById('wb-canvas-wrapper');
+            const canvas = document.getElementById('wb-canvas');
+            if (!wrapper || !canvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            const rect = wrapper.getBoundingClientRect();
+            canvas.width = Math.max(300, Math.floor(rect.width * dpr));
+            canvas.height = Math.max(300, Math.floor(rect.height * dpr));
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        function renderBackgroundToCtx(ctx, w, h, bg) {
+            if (bg === 'dark') {
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, w, h);
+                ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+                ctx.lineWidth = 1;
+                const step = 28;
+                for (let x = 0; x < w; x += step) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                }
+                for (let y = 0; y < h; y += step) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                }
+                return;
+            }
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+
+            if (bg === 'grid') {
+                ctx.strokeStyle = '#e2e8f0';
+                ctx.lineWidth = 1;
+                const step = 26;
+                for (let x = 0; x < w; x += step) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                }
+                for (let y = 0; y < h; y += step) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                }
+            } else if (bg === 'dots') {
+                ctx.fillStyle = '#cbd5e1';
+                const step = 26;
+                for (let x = step; x < w; x += step) {
+                    for (let y = step; y < h; y += step) {
+                        ctx.beginPath();
+                        ctx.arc(x, y, 1.4, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            } else if (bg === 'lines') {
+                ctx.strokeStyle = '#e2e8f0';
+                ctx.lineWidth = 1;
+                const step = 32;
+                for (let y = step; y < h; y += step) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                }
+            }
+        }
+
+        function drawArrowHead(ctx, fromX, fromY, toX, toY, size = 12) {
+            const angle = Math.atan2(toY - fromY, toX - fromX);
+            ctx.beginPath();
+            ctx.moveTo(toX, toY);
+            ctx.lineTo(toX - size * Math.cos(angle - Math.PI / 6), toY - size * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(toX, toY);
+            ctx.lineTo(toX - size * Math.cos(angle + Math.PI / 6), toY - size * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+        }
+
+        function renderStrokeToCtx(ctx, s) {
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = s.color || '#0f172a';
+            ctx.fillStyle = s.color || '#0f172a';
+            ctx.lineWidth = s.width || 3;
+            ctx.globalAlpha = s.alpha ?? 1;
+
+            if (s.type === 'freehand' || s.type === 'highlighter') {
+                const pts = s.points || [];
+                if (pts.length === 1) {
+                    ctx.beginPath();
+                    ctx.arc(pts[0].x, pts[0].y, (s.width || 3) / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (pts.length > 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length - 1; i++) {
+                        const midX = (pts[i].x + pts[i + 1].x) / 2;
+                        const midY = (pts[i].y + pts[i + 1].y) / 2;
+                        ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+                    }
+                    const last = pts[pts.length - 1];
+                    ctx.lineTo(last.x, last.y);
+                    ctx.stroke();
+                }
+            } else if (s.type === 'line') {
+                ctx.beginPath();
+                ctx.moveTo(s.x1, s.y1);
+                ctx.lineTo(s.x2, s.y2);
+                ctx.stroke();
+            } else if (s.type === 'arrow') {
+                ctx.beginPath();
+                ctx.moveTo(s.x1, s.y1);
+                ctx.lineTo(s.x2, s.y2);
+                ctx.stroke();
+                drawArrowHead(ctx, s.x1, s.y1, s.x2, s.y2, Math.max(10, (s.width || 3) * 3.5));
+            } else if (s.type === 'axes') {
+                const cx = (s.x1 + s.x2) / 2;
+                const cy = (s.y1 + s.y2) / 2;
+                const left = Math.min(s.x1, s.x2);
+                const right = Math.max(s.x1, s.x2);
+                const top = Math.min(s.y1, s.y2);
+                const bottom = Math.max(s.y1, s.y2);
+                // Oś X
+                ctx.beginPath(); ctx.moveTo(left, cy); ctx.lineTo(right, cy); ctx.stroke();
+                drawArrowHead(ctx, left, cy, right, cy, 10);
+                // Oś Y
+                ctx.beginPath(); ctx.moveTo(cx, bottom); ctx.lineTo(cx, top); ctx.stroke();
+                drawArrowHead(ctx, cx, bottom, cx, top, 10);
+                ctx.font = 'bold 13px Inter, sans-serif';
+                ctx.fillText('x', right - 10, cy + 16);
+                ctx.fillText('y', cx + 10, top + 12);
+            } else if (s.type === 'rect') {
+                ctx.strokeRect(s.x1, s.y1, s.x2 - s.x1, s.y2 - s.y1);
+            } else if (s.type === 'circle') {
+                const cx = (s.x1 + s.x2) / 2;
+                const cy = (s.y1 + s.y2) / 2;
+                const rx = Math.abs(s.x2 - s.x1) / 2;
+                const ry = Math.abs(s.y2 - s.y1) / 2;
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+                ctx.stroke();
+            } else if (s.type === 'triangle') {
+                const topX = (s.x1 + s.x2) / 2;
+                ctx.beginPath();
+                ctx.moveTo(topX, s.y1);
+                ctx.lineTo(s.x2, s.y2);
+                ctx.lineTo(s.x1, s.y2);
+                ctx.closePath();
+                ctx.stroke();
+            } else if (s.type === 'text') {
+                ctx.font = '600 18px Inter, sans-serif';
+                const lines = String(s.text || '').split('
+');
+                lines.forEach((ln, idx) => {
+                    ctx.fillText(ln, s.x1, s.y1 + idx * 24);
+                });
+            }
+
+            ctx.restore();
+        }
+
+        function wbRedrawCanvas() {
+            const canvas = document.getElementById('wb-canvas');
+            const page = wbGetCurrentPage();
+            if (!canvas || !page) return;
+
+            const dpr = window.devicePixelRatio || 1;
+            const w = canvas.width / dpr;
+            const h = canvas.height / dpr;
+            const ctx = canvas.getContext('2d');
+
+            renderBackgroundToCtx(ctx, w, h, page.bg || 'grid');
+            (page.strokes || []).forEach(s => renderStrokeToCtx(ctx, s));
+            if (wbActiveStroke) {
+                renderStrokeToCtx(ctx, wbActiveStroke);
+            }
+        }
+
+        function wbEraseAtPoint(x, y) {
+            const page = wbGetCurrentPage();
+            if (!page || !page.strokes.length) return;
+            const radius = Math.max(16, wbWidth * 3);
+            const beforeLen = page.strokes.length;
+
+            page.strokes = page.strokes.filter(s => {
+                if (s.points) {
+                    return !s.points.some(p => Math.hypot(p.x - x, p.y - y) < radius);
+                }
+                const minX = Math.min(s.x1, s.x2 ?? s.x1) - radius;
+                const maxX = Math.max(s.x1, s.x2 ?? s.x1) + radius;
+                const minY = Math.min(s.y1, s.y2 ?? s.y1) - radius;
+                const maxY = Math.max(s.y1, s.y2 ?? s.y1) + radius;
+                return !(x >= minX && x <= maxX && y >= minY && y <= maxY);
+            });
+
+            if (page.strokes.length !== beforeLen) {
+                wbRedrawCanvas();
+                wbScheduleSave();
+            }
+        }
+
+        function initWhiteboardEvents() {
+            const canvas = document.getElementById('wb-canvas');
+            if (!canvas) return;
+
+            const getCoords = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: Math.round((e.clientX - rect.left) * 10) / 10,
+                    y: Math.round((e.clientY - rect.top) * 10) / 10
+                };
+            };
+
+            canvas.addEventListener('pointerdown', (e) => {
+                if (!wbCurrentBoardId) return;
+                canvas.setPointerCapture(e.pointerId);
+                const { x, y } = getCoords(e);
+
+                if (wbTool === 'text') {
+                    const txt = prompt('Wpisz treść zadania lub wzór na tablicy:');
+                    if (txt && txt.trim()) {
+                        const page = wbGetCurrentPage();
+                        page.strokes.push({
+                            type: 'text',
+                            x1: x,
+                            y1: y,
+                            text: txt.trim(),
+                            color: wbColor,
+                            width: wbWidth
+                        });
+                        wbRedoStack = [];
+                        wbRedrawCanvas();
+                        wbScheduleSave();
+                    }
+                    return;
+                }
+
+                wbIsDrawing = true;
+                if (wbTool === 'eraser') {
+                    wbEraseAtPoint(x, y);
+                    return;
+                }
+
+                if (wbTool === 'pen' || wbTool === 'highlighter') {
+                    wbActiveStroke = {
+                        type: wbTool === 'highlighter' ? 'highlighter' : 'freehand',
+                        color: wbColor,
+                        width: wbTool === 'highlighter' ? Math.max(16, wbWidth * 4) : wbWidth,
+                        alpha: wbTool === 'highlighter' ? 0.32 : 1,
+                        points: [{ x, y }]
+                    };
+                } else {
+                    wbActiveStroke = {
+                        type: wbTool,
+                        color: wbColor,
+                        width: wbWidth,
+                        alpha: 1,
+                        x1: x,
+                        y1: y,
+                        x2: x,
+                        y2: y
+                    };
+                }
+                wbRedrawCanvas();
+            });
+
+            canvas.addEventListener('pointermove', (e) => {
+                if (!wbIsDrawing || !wbCurrentBoardId) return;
+                const { x, y } = getCoords(e);
+
+                if (wbTool === 'eraser') {
+                    wbEraseAtPoint(x, y);
+                    return;
+                }
+
+                if (!wbActiveStroke) return;
+                if (wbActiveStroke.points) {
+                    wbActiveStroke.points.push({ x, y });
+                } else {
+                    wbActiveStroke.x2 = x;
+                    wbActiveStroke.y2 = y;
+                }
+                wbRedrawCanvas();
+            });
+
+            const finishStroke = () => {
+                if (!wbIsDrawing) return;
+                wbIsDrawing = false;
+                if (!wbActiveStroke) return;
+
+                const page = wbGetCurrentPage();
+                if (page) {
+                    let finalStroke = wbActiveStroke;
+                    if (wbAutoShape && finalStroke.type === 'freehand' && finalStroke.points) {
+                        const recognized = recognizeHandDrawnShape(finalStroke.points);
+                        if (recognized) {
+                            finalStroke = {
+                                ...recognized,
+                                color: finalStroke.color,
+                                width: finalStroke.width,
+                                alpha: 1
+                            };
+                        }
+                    }
+                    page.strokes.push(finalStroke);
+                    wbRedoStack = [];
+                    wbScheduleSave();
+                }
+                wbActiveStroke = null;
+                wbRedrawCanvas();
+            };
+
+            canvas.addEventListener('pointerup', finishStroke);
+            canvas.addEventListener('pointercancel', finishStroke);
+
+            window.addEventListener('resize', () => {
+                if (wbCurrentBoardId) {
+                    wbResizeCanvas();
+                    wbRedrawCanvas();
+                }
+            });
+
+            window.addEventListener('keydown', (e) => {
+                if (!wbCurrentBoardId) return;
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    if (e.shiftKey) wbRedo();
+                    else wbUndo();
+                } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+                    e.preventDefault();
+                    wbRedo();
+                }
+            });
+        }
+
+        // Eksport wielostronicowej notatki tablicowej do pliku PDF (jsPDF)
+        function exportCurrentBoardPDF() {
+            if (!wbCurrentBoardId) return;
+            exportBoardPDFById(wbCurrentBoardId);
+        }
+
+        function exportLessonBoardPDF(lessonId) {
+            const board = getOrCreateBoardForLesson(lessonId);
+            const les = state.lessons.find(l => l.id === lessonId);
+            if (les) {
+                board.title = `${getLessonDisplayTitle(les)} (${les.date})`;
+                board.subtitle = les.topic || 'Notatki z lekcji';
+            }
+            exportBoardPDFById(board.id);
+        }
+
+        function exportBoardPDFById(boardId) {
+            ensureWhiteboardsStore();
+            const board = state.whiteboards[boardId];
+            if (!board) return;
+
+            if (!window.jspdf || !window.jspdf.jsPDF) {
+                showToast('Biblioteka PDF jeszcze się ładuje, spróbuj za chwilę.', 'error');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+            const pageW = pdf.internal.pageSize.getWidth();
+            const pageH = pdf.internal.pageSize.getHeight();
+
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = 1400;
+            offCanvas.height = 900;
+            const ctx = offCanvas.getContext('2d');
+
+            const pages = board.pages && board.pages.length ? board.pages : [{ bg: 'grid', strokes: [] }];
+
+            pages.forEach((p, idx) => {
+                if (idx > 0) pdf.addPage();
+
+                renderBackgroundToCtx(ctx, offCanvas.width, offCanvas.height, p.bg || 'grid');
+                (p.strokes || []).forEach(s => renderStrokeToCtx(ctx, s));
+
+                // Pasek nagłówka na górze wyrenderowanej strony
+                ctx.save();
+                ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+                ctx.fillRect(0, 0, offCanvas.width, 48);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px Inter, sans-serif';
+                ctx.fillText(`MathFlow • ${board.title || 'Notatka z lekcji'}`, 20, 30);
+                ctx.font = '500 14px Inter, sans-serif';
+                ctx.fillStyle = '#cbd5e1';
+                ctx.fillText(`Strona ${idx + 1} / ${pages.length}`, offCanvas.width - 130, 30);
+                ctx.restore();
+
+                const imgData = offCanvas.toDataURL('image/jpeg', 0.92);
+                pdf.addImage(imgData, 'JPEG', 4, 4, pageW - 8, pageH - 8);
+            });
+
+            const safeName = (board.title || 'Notatka_MathFlow')
+                .replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _-]/g, '')
+                .replace(/\s+/g, '_');
+            pdf.save(`${safeName}.pdf`);
+            showToast('Wygenerowano i pobrano notatkę w formacie PDF!');
+        }
+
         // Start aplikacji po załadowaniu DOM
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initAuthAndApp);
+            document.addEventListener('DOMContentLoaded', () => {
+                initWhiteboardEvents();
+                initAuthAndApp();
+            });
         } else {
+            initWhiteboardEvents();
             initAuthAndApp();
         }
     </script>
