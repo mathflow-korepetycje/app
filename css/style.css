@@ -1,0 +1,17 @@
+.fade-in {
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Placeholder dla pola tekstowego na tablicy */
+        #wb-inline-text-editor:empty:before {
+            content: attr(data-placeholder);
+            color: #94a3b8;
+            pointer-events: none;
+        }
+        /* Płynne przewijanie na urządzeniach mobilnych */
+        .overflow-x-auto {
+            -webkit-overflow-scrolling: touch;
+        }
