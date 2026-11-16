@@ -50,7 +50,6 @@
             color: #0f172a;
             -webkit-tap-highlight-color: transparent;
         }
-        /* Gwarancja ukrycia całej aplikacji oraz bocznego paska przed zalogowaniem */
         #app-shell.hidden,
         #auth-screen.hidden,
         .hidden {
@@ -79,14 +78,14 @@
             <form id="auth-form" action="javascript:void(0);" onsubmit="return safeLoginSubmit(event)" class="space-y-4">
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">Adres e-mail</label>
-                    <input type="email" id="auth-email" autocomplete="email" required placeholder="twoj@email.pl" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    <input type="email" id="auth-email" name="email" autocomplete="email" required placeholder="twoj@email.pl" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">Hasło</label>
-                    <input type="password" id="auth-password" autocomplete="current-password" required placeholder="••••••••" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                    <input type="password" id="auth-password" name="password" autocomplete="current-password" required placeholder="••••••••" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 </div>
-                <div id="auth-error" class="hidden text-xs text-rose-600 bg-rose-50 border border-rose-200 p-3 rounded-xl"></div>
-                <button type="submit" id="auth-submit-btn" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-3.5 rounded-xl shadow-md transition-all">
+                <div id="auth-error" class="hidden text-xs text-rose-700 bg-rose-50 border border-rose-200 p-3 rounded-xl font-medium"></div>
+                <button type="submit" id="auth-submit-btn" onclick="safeLoginSubmit(event)" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-3.5 rounded-xl shadow-md transition-all">
                     Zaloguj się
                 </button>
             </form>
@@ -376,7 +375,6 @@
                         </div>
                     </div>
 
-                    <!-- Przełącznik podzakładek rozliczeń -->
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <div class="inline-flex bg-slate-200/80 p-1 rounded-xl">
                             <button id="bill-sub-balances" onclick="switchBillingSubtab('balances')" class="px-3.5 py-2 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-2xs transition-all">
@@ -397,7 +395,6 @@
                         </div>
                     </div>
 
-                    <!-- Widok 1: Salda uczniów -->
                     <div id="billing-balances-view" class="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse">
@@ -415,7 +412,6 @@
                         </div>
                     </div>
 
-                    <!-- Widok 2: Historia wpłat -->
                     <div id="billing-payments-view" class="hidden bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse">
@@ -434,7 +430,6 @@
                         </div>
                     </div>
 
-                    <!-- Widok 3: Rejestr Zestawień i Rachunków NDG -->
                     <div id="billing-invoices-view" class="hidden bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
                         <div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 bg-slate-50/60">
                             <div>
@@ -809,7 +804,6 @@
     <!-- Modal: Dwukolumnowy Kreator Zestawienia do Zapłaty i Rachunku (NDG 2026) -->
     <div id="modal-invoice" class="fixed inset-0 bg-slate-900/65 backdrop-blur-xs z-50 hidden flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
         <div class="bg-white rounded-2xl max-w-6xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[94vh] overflow-hidden">
-            <!-- Nagłówek modalu -->
             <div class="px-4 sm:px-6 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3 shrink-0">
                 <div class="flex items-center gap-2.5 min-w-0">
                     <div class="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0">
@@ -825,13 +819,8 @@
                 </button>
             </div>
 
-            <!-- Dwukolumnowy korpus: LEWA (Ustawienia) | PRAWA (Podgląd dokumentu na żywo) -->
             <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto lg:overflow-hidden min-h-0">
-                
-                <!-- LEWA KOLUMNA: MODUŁ USTAWIEŃ (5/12 szerokości na desktopie) -->
                 <form onsubmit="saveAndGenerateInvoice(event)" class="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-slate-200 p-4 sm:p-5 space-y-4 overflow-y-auto bg-white">
-                    
-                    <!-- Przełącznik typu dokumentu -->
                     <div>
                         <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">1. Rodzaj dokumentu</label>
                         <div class="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl">
@@ -845,7 +834,6 @@
                         <input type="hidden" id="inv-doc-type" value="statement">
                     </div>
 
-                    <!-- Wybór ucznia i okresu -->
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                             <label class="block text-xs font-semibold text-slate-600 mb-1">Uczeń *</label>
@@ -860,14 +848,12 @@
                         </div>
                     </div>
 
-                    <!-- Dane nabywcy -->
                     <div class="bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-2">
                         <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600 block">2. Dane nabywcy / rodzica</span>
                         <input type="text" id="inv-buyer-name" oninput="renderInvoiceLivePreview()" required placeholder="Imię i nazwisko nabywcy" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none">
                         <input type="text" id="inv-buyer-address" oninput="renderInvoiceLivePreview()" placeholder="Adres nabywcy (opcjonalnie)" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none">
                     </div>
 
-                    <!-- Wybór lekcji do rozliczenia -->
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center justify-between gap-1.5">
                             <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">3. Lekcje ujęte w dokumencie</span>
@@ -883,7 +869,6 @@
                         <div id="inv-lessons-list" class="max-h-48 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/60"></div>
                     </div>
 
-                    <!-- Ustawienia daty i sposobu rozliczenia -->
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
                             <label class="block text-[11px] font-semibold text-slate-600 mb-1">Data wystawienia</label>
@@ -913,17 +898,13 @@
                     </div>
                 </form>
 
-                <!-- PRAWA KOLUMNA: PODGLĄD DOKUMENTU NA ŻYWO (7/12 szerokości na desktopie) -->
                 <div class="lg:col-span-7 bg-slate-200/80 p-3 sm:p-6 overflow-y-auto flex flex-col items-center">
                     <div class="w-full max-w-[680px] flex items-center justify-between mb-2.5 text-[11px] text-slate-600 font-semibold">
                         <span class="flex items-center gap-1.5"><i class="fa-regular fa-eye text-indigo-600"></i> Podgląd wydruku A4 na żywo</span>
                         <span id="inv-preview-badge" class="px-2 py-0.5 rounded-full bg-white text-slate-700 shadow-2xs">Zestawienie rozliczeniowe</span>
                     </div>
 
-                    <!-- Kartka A4 -->
-                    <div id="inv-live-preview-sheet" class="w-full max-w-[680px] bg-white rounded-xl shadow-lg border border-slate-300/80 p-5 sm:p-8 text-slate-800 space-y-5 text-xs">
-                        <!-- Wypełniane dynamicznie przez renderInvoiceLivePreview() -->
-                    </div>
+                    <div id="inv-live-preview-sheet" class="w-full max-w-[680px] bg-white rounded-xl shadow-lg border border-slate-300/80 p-5 sm:p-8 text-slate-800 space-y-5 text-xs"></div>
                 </div>
             </div>
         </div>
@@ -1185,23 +1166,116 @@
         </div>
     </div>
 
-    <script src="js/app_part_1.js"></script>
-    <script src="js/app_part_2.js"></script>
-    <script src="js/app_part_3.js"></script>
-    <script src="js/app_part_4_invoices.js"></script>
-
-    <!-- Zabezpieczenie formularza logowania przed odświeżeniem strony -->
+    <!-- Ładowanie skryptów aplikacji -->
     <script>
-        function safeLoginSubmit(e) {
+        window.__scriptLoadErrors = [];
+        function trackScriptError(name) {
+            window.__scriptLoadErrors.push(name);
+        }
+    </script>
+    <script src="js/app_part_1.js" onerror="trackScriptError('js/app_part_1.js')"></script>
+    <script src="js/app_part_2.js" onerror="trackScriptError('js/app_part_2.js')"></script>
+    <script src="js/app_part_3.js" onerror="trackScriptError('js/app_part_3.js')"></script>
+    <script src="js/app_part_4_invoices.js" onerror="trackScriptError('js/app_part_4_invoices.js')"></script>
+
+    <!-- Uniwersalny uchwyt logowania + diagnostyka na ekranie -->
+    <script>
+        function showLoginMessage(msg, isError) {
+            var box = document.getElementById('auth-error');
+            if (!box) return;
+            box.textContent = msg;
+            box.classList.remove('hidden');
+            if (isError) {
+                box.className = 'text-xs text-rose-700 bg-rose-50 border border-rose-200 p-3 rounded-xl font-medium';
+            } else {
+                box.className = 'text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 p-3 rounded-xl font-medium';
+            }
+        }
+
+        async function safeLoginSubmit(e) {
             if (e && typeof e.preventDefault === 'function') {
                 e.preventDefault();
                 e.stopPropagation();
             }
-            if (typeof handleSupabaseAuth === 'function') {
-                handleSupabaseAuth(e);
-            } else if (typeof window.handleSupabaseAuth === 'function') {
-                window.handleSupabaseAuth(e);
+
+            var emailEl = document.getElementById('auth-email');
+            var passEl = document.getElementById('auth-password');
+            var btnEl = document.getElementById('auth-submit-btn');
+            var email = emailEl ? emailEl.value.trim() : '';
+            var password = passEl ? passEl.value : '';
+
+            if (!email || !password) {
+                showLoginMessage('Wpisz adres e-mail oraz hasło.', true);
+                return false;
             }
+
+            // 1. Sprawdź czy pliki JS w ogóle się załadowały
+            if (window.__scriptLoadErrors && window.__scriptLoadErrors.length > 0) {
+                showLoginMessage('Błąd: Nie znaleziono pliku na serwerze: ' + window.__scriptLoadErrors.join(', ') + '. Sprawdź strukturę folderów na GitHubie.', true);
+                return false;
+            }
+
+            // 2. Sprawdź standardowe nazwy funkcji z app_part_1.js
+            var knownHandlers = ['handleSupabaseAuth', 'loginUser', 'handleLogin', 'signInUser', 'submitAuth'];
+            for (var i = 0; i < knownHandlers.length; i++) {
+                var fnName = knownHandlers[i];
+                if (typeof window[fnName] === 'function') {
+                    try {
+                        await window[fnName](e);
+                    } catch (err) {
+                        showLoginMessage('Błąd logowania (' + fnName + '): ' + (err.message || err), true);
+                    }
+                    return false;
+                }
+            }
+
+            // 3. Fallback: znajdź globalny obiekt klienta Supabase utworzony w app_part_1.js
+            var client = window.supabaseClient || window.sb || window._supabase || window.client;
+            if (!client) {
+                for (var key in window) {
+                    try {
+                        if (window[key] && typeof window[key] === 'object' && window[key].auth && typeof window[key].auth.signInWithPassword === 'function') {
+                            client = window[key];
+                            break;
+                        }
+                    } catch (ignore) {}
+                }
+            }
+
+            if (!client || !client.auth || typeof client.auth.signInWithPassword !== 'function') {
+                showLoginMessage('Nie wykryto klienta Supabase w js/app_part_1.js. Wklej zawartość pliku js/app_part_1.js w czacie, abym dopasował wywołanie.', true);
+                return false;
+            }
+
+            // 4. Wykonaj bezpośrednie logowanie przez wykryty klient Supabase
+            if (btnEl) {
+                btnEl.disabled = true;
+                btnEl.textContent = 'Logowanie...';
+            }
+            showLoginMessage('Łączenie z bazą Supabase...', false);
+
+            try {
+                var res = await client.auth.signInWithPassword({ email: email, password: password });
+                if (res.error) {
+                    showLoginMessage('Błąd logowania: ' + res.error.message, true);
+                } else if (res.data && res.data.user) {
+                    document.getElementById('auth-screen').classList.add('hidden');
+                    document.getElementById('app-shell').classList.remove('hidden');
+                    if (typeof initApp === 'function') await initApp();
+                    else if (typeof loadFromSupabase === 'function') await loadFromSupabase();
+                    else if (typeof renderAll === 'function') renderAll();
+                } else {
+                    showLoginMessage('Nie udało się zalogować — brak odpowiedzi z serwera.', true);
+                }
+            } catch (err) {
+                showLoginMessage('Wyjątek połączenia: ' + (err.message || err), true);
+            } finally {
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.textContent = 'Zaloguj się';
+                }
+            }
+
             return false;
         }
     </script>
