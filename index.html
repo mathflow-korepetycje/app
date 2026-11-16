@@ -17,13 +17,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <!-- jsPDF for Whiteboard PDF Export -->
+    <!-- jsPDF for Whiteboard & Invoices PDF Export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <!-- Supabase JS Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <script src="js/app_part_1.js"></script>
-    
     <script src="js/app_part_2.js"></script>
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -31,7 +30,6 @@
 
     <!-- PEŁNOEKRANOWA INTERAKTYWNA TABLICA MATEMATYCZNA (WZOROWANA NA ONENOTE) -->
     <div id="whiteboard-overlay" class="fixed inset-0 z-50 bg-slate-200 hidden flex flex-col select-none">
-        <!-- Górny ciemny pasek nawigacji notatnika ucznia -->
         <div class="bg-[#18181b] text-zinc-100 px-2.5 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 shrink-0">
             <div class="flex items-center gap-2 min-w-0">
                 <button onclick="closeWhiteboard()" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold flex items-center gap-1.5 shrink-0 text-zinc-200 transition-colors" title="Wróć (Wstecz)">
@@ -50,7 +48,6 @@
                 </div>
             </div>
 
-            <!-- Wybór sekcji (tablicy) wewnątrz notatnika ucznia + strony + Nowe okno + PDF -->
             <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap shrink-0">
                 <div class="flex items-center bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 py-1 text-xs gap-1.5">
                     <i class="fa-solid fa-bookmark text-purple-400 text-[11px]"></i>
@@ -76,8 +73,6 @@
                     <span id="wb-fullscreen-label" class="hidden md:inline">Pełny ekran</span>
                 </button>
 
-
-
                 <button onclick="exportCurrentBoardPDF()" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs" title="Eksportuj bieżącą tablicę do PDF">
                     <i class="fa-solid fa-file-pdf"></i>
                     <span>PDF</span>
@@ -85,12 +80,8 @@
             </div>
         </div>
 
-        <!-- Kompaktowy pasek narzędzi (Wstążka Rysowanie w stylu Microsoft OneNote) -->
         <div class="bg-[#202024] border-b border-zinc-800 px-2 sm:px-4 py-1.5 flex items-center justify-between gap-2 shrink-0 text-zinc-200 relative z-30">
-            
-            <!-- Lewa grupa: Historia + Zaznaczanie/Lasso + Rysowanie (Pisak, Marker, Gumka, Laser) -->
             <div class="flex items-center gap-1.5 flex-wrap">
-                <!-- Cofnij / Ponów -->
                 <div class="flex items-center gap-0.5 bg-zinc-900 border border-zinc-800 p-0.5 rounded-xl">
                     <button onclick="wbUndo()" class="w-8 h-8 rounded-lg hover:bg-zinc-800 text-zinc-300 hover:text-white flex items-center justify-center transition-colors" title="Cofnij (Ctrl+Z)">
                         <i class="fa-solid fa-rotate-left text-xs"></i>
@@ -100,7 +91,6 @@
                     </button>
                 </div>
 
-                <!-- Kategoria 1: Zaznaczanie i Obiekty (Zaznacz, Lasso, Tekst, Obraz) -->
                 <div class="flex items-center gap-0.5 bg-zinc-900 border border-zinc-800 p-0.5 rounded-xl">
                     <button onclick="wbSetTool('select')" data-wb-tool="select" class="wb-tool-btn px-2.5 h-8 rounded-lg text-xs font-semibold flex items-center gap-1.5 text-zinc-300 hover:bg-zinc-800 transition-all" title="Zaznacz / Przesuń i skaluj obiekty">
                         <i class="fa-solid fa-arrow-pointer text-xs"></i>
@@ -124,7 +114,6 @@
                     <input type="file" id="wb-image-input" accept="image/*" class="hidden" onchange="wbHandleImageFileInput(event)">
                 </div>
 
-                <!-- Kategoria 2: Przybory do pisania (Pisak, Marker, Rozwijana Gumka, Laser) -->
                 <div class="flex items-center gap-0.5 bg-zinc-900 border border-zinc-800 p-0.5 rounded-xl">
                     <button onclick="wbSetTool('pen')" data-wb-tool="pen" class="wb-tool-btn px-2.5 h-8 rounded-lg text-xs font-semibold flex items-center gap-1.5 bg-zinc-700 text-white ring-1 ring-purple-400 transition-all" title="Pisak (przytrzymaj na końcu, aby zamienić w kształt)">
                         <i class="fa-solid fa-pen text-xs"></i>
@@ -135,7 +124,6 @@
                         <span class="hidden lg:inline">Marker</span>
                     </button>
 
-                    <!-- Rozwijana kategoria: Gumka (Linii / Punktowa) -->
                     <div class="relative" id="wb-dd-eraser-wrap">
                         <button id="wb-eraser-main-btn" onclick="wbToggleDropdown('eraser')" data-wb-tool="eraser" class="wb-tool-btn px-2 h-8 rounded-lg text-xs font-semibold flex items-center gap-1 text-zinc-300 hover:bg-zinc-800 transition-all" title="Gumka (kliknij, aby wybrać tryb ścierania)">
                             <i class="fa-solid fa-eraser text-purple-400 text-xs"></i>
@@ -166,7 +154,6 @@
                     </button>
                 </div>
 
-                <!-- Kategoria 3: Rozwijane Kształty geometryczne + Auto-kształty -->
                 <div class="relative" id="wb-dd-shapes-wrap">
                     <button id="wb-shapes-main-btn" onclick="wbToggleDropdown('shapes')" class="px-2.5 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-xs font-semibold flex items-center gap-1.5 text-zinc-200 transition-all" title="Wstaw kształt geometryczny lub układ współrzędnych">
                         <i id="wb-active-shape-icon" class="fa-solid fa-shapes text-purple-400 text-xs"></i>
@@ -207,7 +194,6 @@
                     </div>
                 </div>
 
-                <!-- Kategoria 4: Rozwijana Paleta Kolorów i Grubości (Styl OneNote) -->
                 <div class="relative" id="wb-dd-style-wrap">
                     <button onclick="wbToggleDropdown('style')" class="px-2.5 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-xs font-semibold flex items-center gap-2 text-zinc-200 transition-all" title="Kolor i grubość pisaka">
                         <span id="wb-current-color-dot" class="w-4 h-4 rounded-full border border-zinc-400 shrink-0" style="background-color: #0f172a;"></span>
@@ -246,9 +232,7 @@
                 </div>
             </div>
 
-            <!-- Prawa grupa: Widok / Powiększenie (+ / - / Dopasuj) + Styl kartki + Akcje -->
             <div class="flex items-center gap-1.5 shrink-0">
-                <!-- Kontrolki Zoom (+ / - / Reset) -->
                 <div class="flex items-center bg-zinc-900 border border-zinc-800 p-0.5 rounded-xl text-xs" title="Przybliżanie / Oddalanie (Ctrl + rolka myszy)">
                     <button onclick="wbChangeZoom(-0.15)" class="w-7 h-7 rounded-lg hover:bg-zinc-800 text-zinc-300 hover:text-white flex items-center justify-center" title="Oddal (-)">
                         <i class="fa-solid fa-minus text-[10px]"></i>
@@ -261,7 +245,6 @@
                     </button>
                 </div>
 
-                <!-- Kategoria 5: Rozwijany Widok i Tło kartki (Styl OneNote: Linie / Kratka / Kropki) -->
                 <div class="relative" id="wb-dd-view-wrap">
                     <button onclick="wbToggleDropdown('view')" class="px-2.5 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-xs font-semibold flex items-center gap-1.5 text-zinc-200 transition-all" title="Styl papieru i opcje widoku">
                         <i class="fa-solid fa-border-all text-zinc-400 text-xs"></i>
@@ -288,7 +271,6 @@
                     </div>
                 </div>
 
-                <!-- Usuń zaznaczenie / Wyczyść stronę -->
                 <button id="wb-lasso-delete-btn" onclick="wbDeleteLassoSelection()" class="hidden px-2.5 h-9 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1" title="Usuń zaznaczone elementy (Delete)">
                     <i class="fa-solid fa-trash-can"></i> <span class="hidden sm:inline">Usuń</span>
                 </button>
@@ -298,10 +280,8 @@
             </div>
         </div>
 
-        <!-- Obszar roboczy ze stałą kartką A4 Poziomo (1400×900) zgodną w 100% z wydrukiem PDF -->
         <div id="wb-canvas-wrapper" class="flex-1 relative overflow-hidden touch-none bg-slate-200/90" style="cursor: crosshair;">
             <canvas id="wb-canvas" class="block w-full h-full touch-none"></canvas>
-            <!-- Niestandardowy, zawsze widoczny kursor rysika / tabletu graficznego (nie znika przy hover) -->
             <div id="wb-stylus-cursor" class="hidden pointer-events-none fixed z-30 -translate-x-1/2 -translate-y-1/2"></div>
             <div id="wb-inline-text-editor" contenteditable="true" spellcheck="false" data-placeholder="Wpisz tekst..." class="hidden absolute z-20 bg-white/95 backdrop-blur-2xs border-2 border-purple-500 rounded-lg px-2.5 py-1 text-lg font-semibold outline-none shadow-lg min-w-[60px] min-h-[34px] whitespace-pre leading-snug"></div>
         </div>
@@ -431,7 +411,6 @@
 
                 <!-- 1. PULPIT I EWIDENCJA -->
                 <section id="view-dashboard" class="tab-view space-y-5 sm:space-y-6 fade-in min-w-0">
-                    <!-- Wybór Kwartału -->
                     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs min-w-0">
                         <div class="min-w-0">
                             <h2 class="text-xs sm:text-sm font-semibold text-slate-500 uppercase tracking-wider">Okres rozliczeniowy (kwartał)</h2>
@@ -551,7 +530,6 @@
                                 <span id="ndg-records-count" class="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg self-start sm:self-auto shrink-0">0 pozycji</span>
                             </div>
 
-                            <!-- Pasek wyszukiwania, filtrowania i sortowania ewidencji -->
                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
                                 <div class="relative min-w-0">
                                     <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs absolute left-3.5 top-1/2 -translate-y-1/2"></i>
@@ -602,8 +580,6 @@
                 <!-- 2. KALENDARZ MIESIĘCZNY -->
                 <section id="view-schedule" class="tab-view hidden space-y-5 fade-in min-w-0">
                     <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start min-w-0">
-                        
-                        <!-- Lewa kolumna: Kalendarz miesięczny (7 kolumn) -->
                         <div class="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-2xs p-3.5 sm:p-5 space-y-4 min-w-0">
                             <div class="flex items-center justify-between gap-2">
                                 <div class="flex items-center gap-1.5 sm:gap-2 min-w-0">
@@ -620,7 +596,6 @@
                                 </button>
                             </div>
 
-                            <!-- Nagłówki dni tygodnia -->
                             <div class="grid grid-cols-7 text-center text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider pb-1 border-b border-slate-100">
                                 <div>Pon</div>
                                 <div>Wt</div>
@@ -631,10 +606,8 @@
                                 <div class="text-rose-500">Nie</div>
                             </div>
 
-                            <!-- Siatka dni miesiąca -->
                             <div id="calendar-grid" class="grid grid-cols-7 gap-1 sm:gap-1.5"></div>
 
-                            <!-- Legenda -->
                             <div class="flex flex-wrap items-center gap-3 sm:gap-4 pt-2 border-t border-slate-100 text-[11px] text-slate-500">
                                 <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-brand-600"></span> Zaplanowana</span>
                                 <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Odbyta</span>
@@ -642,7 +615,6 @@
                             </div>
                         </div>
 
-                        <!-- Prawa kolumna: Oś godzinowa wybranego dnia (5 kolumn) -->
                         <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-2xs p-3.5 sm:p-5 space-y-4 min-w-0">
                             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                                 <div class="min-w-0">
@@ -663,7 +635,6 @@
 
                             <div id="day-timeline-list" class="space-y-1.5 max-h-[560px] overflow-y-auto pr-1"></div>
                         </div>
-
                     </div>
                 </section>
 
@@ -688,21 +659,28 @@
                     <div id="groups-grid" class="hidden grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0"></div>
                 </section>
 
-                <!-- 4. WPŁATY, NADPŁATY I ROZLICZENIA -->
+                <!-- 4. WPŁATY, NADPŁATY I RACHUNKI (NDG) -->
                 <section id="view-billing" class="tab-view hidden space-y-5 sm:space-y-6 fade-in min-w-0">
-                    <!-- Górny pasek akcji i przełącznik widoku -->
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs min-w-0">
-                        <div class="flex bg-slate-100 p-1 rounded-xl w-full sm:w-fit">
-                            <button onclick="switchBillingSubtab('balances')" id="bill-sub-balances" class="flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-900 shadow-2xs transition-all">Salda uczniów</button>
-                            <button onclick="switchBillingSubtab('payments')" id="bill-sub-payments" class="flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all">Rejestr wpłat</button>
+                    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs min-w-0">
+                        <div class="flex bg-slate-100 p-1 rounded-xl w-full lg:w-fit">
+                            <button onclick="switchBillingSubtab('balances')" id="bill-sub-balances" class="flex-1 lg:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-900 shadow-2xs transition-all">Salda uczniów</button>
+                            <button onclick="switchBillingSubtab('payments')" id="bill-sub-payments" class="flex-1 lg:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all">Rejestr wpłat</button>
+                            <button onclick="switchBillingSubtab('invoices')" id="bill-sub-invoices" class="flex-1 lg:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-file-invoice text-indigo-500"></i> Rachunki (NDG)
+                            </button>
                         </div>
-                        <button onclick="openPaymentModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all w-full sm:w-auto">
-                            <i class="fa-solid fa-plus-circle"></i> Zaksięguj wpłatę
-                        </button>
+                        <div class="grid grid-cols-2 sm:flex gap-2 w-full lg:w-auto">
+                            <button onclick="openInvoiceModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all">
+                                <i class="fa-solid fa-file-invoice-dollar"></i> Wystaw rachunek
+                            </button>
+                            <button onclick="openPaymentModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all">
+                                <i class="fa-solid fa-plus-circle"></i> Zaksięguj wpłatę
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Pasek wyszukiwania i filtrowania po uczniach -->
-                    <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row gap-3 min-w-0">
+                    <div id="billing-filter-bar" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row gap-3 min-w-0">
                         <div class="relative flex-1 min-w-0">
                             <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs absolute left-3.5 top-1/2 -translate-y-1/2"></i>
                             <input type="text" id="billing-search-input" oninput="renderBilling()" placeholder="Szukaj ucznia, rodzica lub notatki wpłaty..." class="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
@@ -745,6 +723,47 @@
                             </table>
                         </div>
                     </div>
+
+                    <!-- Podzakładka 3: Rejestr Rachunków (NDG 2026) -->
+                    <div id="billing-invoices-view" class="hidden space-y-4 min-w-0">
+                        <div class="bg-indigo-50/80 border border-indigo-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div class="text-xs text-indigo-950 space-y-1">
+                                <p class="font-bold flex items-center gap-1.5">
+                                    <i class="fa-solid fa-scale-balanced text-indigo-600"></i>
+                                    Rachunki w działalności nierejestrowanej (zgodne z Ordynacją podatkową i ustawą o VAT 2026)
+                                </p>
+                                <p class="text-indigo-800/90">
+                                    Na żądanie klienta (zgłoszone w ciągu 3 miesięcy od końca miesiąca wykonania usługi) masz obowiązek wystawić rachunek w terminie 7 dni. Dokumenty zawierają zwolnienie podmiotowe/przedmiotowe z VAT oraz dokładne daty i godziny zajęć.
+                                </p>
+                            </div>
+                            <button onclick="openInvoiceModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shrink-0 shadow-2xs flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-plus"></i> Nowy rachunek PDF
+                            </button>
+                        </div>
+
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden min-w-0">
+                            <div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                <span class="text-xs font-bold text-slate-500 uppercase">Wystawione rachunki (od najnowszych)</span>
+                                <span id="billing-invoices-count" class="text-xs text-slate-400">0 dokumentów</span>
+                            </div>
+                            <div class="overflow-x-auto w-full">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+                                            <th class="py-3 px-3 sm:px-4 font-semibold whitespace-nowrap">Numer rachunku</th>
+                                            <th class="py-3 px-3 sm:px-4 font-semibold whitespace-nowrap">Data wystawienia</th>
+                                            <th class="py-3 px-3 sm:px-4 font-semibold">Nabywca (Rodzic / Uczeń)</th>
+                                            <th class="py-3 px-3 sm:px-4 font-semibold text-center whitespace-nowrap">Lekcje</th>
+                                            <th class="py-3 px-3 sm:px-4 font-semibold text-right whitespace-nowrap">Kwota</th>
+                                            <th class="py-3 px-3 sm:px-4 font-semibold text-center whitespace-nowrap">Status</th>
+                                            <th class="py-3 px-3 sm:px-4 font-semibold text-right whitespace-nowrap">Dokument</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="invoices-table-body" class="divide-y divide-slate-100 text-sm"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- 5. POSTĘPY I ARKUSZE -->
@@ -763,7 +782,6 @@
                             </div>
                         </div>
 
-                        <!-- Wyszukiwarka i filtr w postępach -->
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-100">
                             <div class="relative sm:col-span-2 min-w-0">
                                 <i class="fa-solid fa-magnifying-glass text-slate-400 text-xs absolute left-3.5 top-1/2 -translate-y-1/2"></i>
@@ -796,8 +814,7 @@
                     </div>
                 </section>
 
-
-                <!-- 7. MODUŁ TABLICE (NOTATNIKI UCZNIÓW W STYLU ONENOTE) -->
+                <!-- 7. MODUŁ TABLICE -->
                 <section id="view-boards" class="tab-view hidden space-y-5 fade-in min-w-0">
                     <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
                         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -827,11 +844,16 @@
                 <section id="view-settings" class="tab-view hidden space-y-5 sm:space-y-6 fade-in min-w-0">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 min-w-0">
                         <form onsubmit="saveSettings(event)" class="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4 min-w-0">
-                            <h3 class="font-bold text-base sm:text-lg text-slate-900 border-b border-slate-100 pb-3">Dane do rozliczeń i limity</h3>
+                            <h3 class="font-bold text-base sm:text-lg text-slate-900 border-b border-slate-100 pb-3">Dane do rozliczeń, rachunków i limity</h3>
                             
                             <div>
-                                <label class="block text-xs font-semibold text-slate-600 mb-1">Twoje imię i nazwisko (podpis na wiadomościach)</label>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Twoje imię i nazwisko (podpis i wystawca na rachunkach)</label>
                                 <input type="text" id="set-tutor-name" required class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Adres zamieszkania wystawcy (wymagany na rachunku NDG)</label>
+                                <input type="text" id="set-seller-address" placeholder="np. ul. Przykładowa 12/4, 47-100 Strzelce Opolskie" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                             </div>
 
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -846,13 +868,22 @@
                             </div>
 
                             <div>
-                                <label class="block text-xs font-semibold text-slate-600 mb-1">Numer konta bankowego (opcjonalnie)</label>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Numer konta bankowego (opcjonalnie na rachunku)</label>
                                 <input type="text" id="set-bank-account" placeholder="PL 00 0000 0000 0000 0000 0000 0000" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                             </div>
 
-                            <div>
-                                <label class="block text-xs font-semibold text-slate-600 mb-1">Domyślna stawka za 60 min (zł)</label>
-                                <input type="number" id="set-default-rate" required class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Domyślna stawka za 60 min (zł)</label>
+                                    <input type="number" id="set-default-rate" required class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Podstawa zwolnienia z VAT na rachunku</label>
+                                    <select id="set-vat-exemption" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-brand-500 outline-none">
+                                        <option value="art113">Zwolnienie podmiotowe (art. 113 ust. 1 i 9 ustawy o VAT)</option>
+                                        <option value="art43">Nauczanie prywatne (art. 43 ust. 1 pkt 27 ustawy o VAT)</option>
+                                    </select>
+                                </div>
                             </div>
 
                             <div class="pt-2">
@@ -862,7 +893,6 @@
                             </div>
                         </form>
 
-                        <!-- Integracja z Google Calendar API + Kopia zapasowa JSON -->
                         <div class="space-y-4 sm:space-y-6 min-w-0">
                             <div class="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4 min-w-0">
                                 <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
@@ -919,7 +949,7 @@
                                 <h4 class="font-bold text-sm text-rose-800 flex items-center gap-2">
                                     <i class="fa-solid fa-triangle-exclamation text-rose-600"></i> Strefa niebezpieczna — Reset bazy danych
                                 </h4>
-                                <p class="text-xs text-rose-700 leading-relaxed">Trwałe usunięcie wszystkich uczniów, lekcji, wpłat oraz tablic z lokalnej pamięci i chmury. Operacja wymaga potwierdzenia słowem <strong>USUŃ</strong>.</p>
+                                <p class="text-xs text-rose-700 leading-relaxed">Trwałe usunięcie wszystkich uczniów, lekcji, wpłat, rachunków oraz tablic z lokalnej pamięci i chmury. Operacja wymaga potwierdzenia słowem <strong>USUŃ</strong>.</p>
                                 <div class="pt-1">
                                     <button onclick="openClearDataModal()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl inline-flex items-center gap-1.5 shadow-2xs">
                                         <i class="fa-solid fa-trash-can"></i> Wyczyść wszystkie dane...
@@ -933,7 +963,7 @@
             </main>
         </div>
 
-        <!-- DOLNA NAWIGACJA MOBILNA (Smartfon - układ natywnej aplikacji PWA) -->
+        <!-- DOLNA NAWIGACJA MOBILNA -->
         <nav style="bottom: calc(0.75rem + env(safe-area-inset-bottom));" class="md:hidden fixed left-3 right-3 bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl shadow-lg z-30 flex justify-around items-center h-14 px-1">
             <button onclick="switchTab('dashboard')" data-nav="dashboard" class="nav-btn-mob flex flex-col items-center justify-center flex-1 py-1 text-brand-600">
                 <i class="fa-solid fa-chart-pie text-sm"></i>
@@ -1043,7 +1073,6 @@
                     <input type="text" id="les-topic" placeholder="np. Powtórka przed E8 - geometria płaska" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none">
                 </div>
 
-                <!-- Automatyczna synchronizacja z Kalendarzem Google przy zapisie -->
                 <label class="flex items-start gap-2.5 p-3 rounded-xl bg-sky-50/80 border border-sky-200/80 cursor-pointer">
                     <input type="checkbox" id="les-auto-gcal" checked class="mt-0.5 rounded text-brand-600 focus:ring-brand-500">
                     <div class="text-xs leading-snug">
@@ -1122,6 +1151,95 @@
         </div>
     </div>
 
+    <!-- Modal: Wystaw Rachunek (Działalność Nierejestrowana 2026) -->
+    <div id="modal-invoice" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-40 hidden flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                    <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
+                        <i class="fa-solid fa-file-invoice-dollar text-indigo-600"></i> Wystaw rachunek (NDG 2026)
+                    </h3>
+                    <p class="text-[11px] text-slate-500">Automatyczne rozliczenie lekcji z bazy wraz ze znacznikami dat i godzin</p>
+                </div>
+                <button onclick="closeModal('modal-invoice')" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+
+            <form onsubmit="saveAndGenerateInvoice(event)" class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Uczeń *</label>
+                        <select id="inv-student-id" onchange="onInvoiceStudentOrPeriodChange()" required class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Okres rozliczeniowy (miesiąc)</label>
+                        <input type="month" id="inv-month" onchange="onInvoiceStudentOrPeriodChange()" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                </div>
+
+                <!-- Dane nabywcy (Rodzic / Uczeń) -->
+                <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 space-y-2.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Dane nabywcy na rachunku</span>
+                        <span class="text-[10px] text-slate-400">Automatycznie z kartoteki (możesz doprecyzować)</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">Imię i nazwisko nabywcy *</label>
+                            <input type="text" id="inv-buyer-name" required placeholder="np. Anna Nowak (rodzic)" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">Adres nabywcy (opcjonalnie)</label>
+                            <input type="text" id="inv-buyer-address" placeholder="np. ul. Szkolna 5, 47-100 Strzelce Opolskie" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lista lekcji do uwzględnienia na rachunku -->
+                <div class="space-y-2">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <label class="text-xs font-bold text-slate-700">Pozycje na rachunku (wybierz zajęcia):</label>
+                        <label class="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 cursor-pointer bg-indigo-50 px-2.5 py-1 rounded-lg">
+                            <input type="checkbox" id="inv-include-planned" onchange="onInvoiceStudentOrPeriodChange()" class="rounded text-indigo-600">
+                            <span>Uwzględnij też zaplanowane (np. opłacone z nadpłaty)</span>
+                        </label>
+                    </div>
+
+                    <div id="inv-lessons-list" class="max-h-52 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/50"></div>
+                </div>
+
+                <!-- Podsumowanie kwoty, daty i sposobu płatności -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-indigo-50/70 p-3.5 rounded-xl border border-indigo-200/80">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Data wystawienia</label>
+                        <input type="date" id="inv-issue-date" required class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-slate-600 mb-1">Status i metoda zapłaty</label>
+                        <select id="inv-payment-status" class="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-none">
+                            <option value="Zapłacono (BLIK)">Zapłacono (BLIK)</option>
+                            <option value="Zapłacono (Przelew)">Zapłacono (Przelew)</option>
+                            <option value="Zapłacono (Gotówka)">Zapłacono (Gotówka)</option>
+                            <option value="Zapłacono z nadpłaty">Zapłacono z nadpłaty</option>
+                            <option value="Do zapłaty (7 dni)">Do zapłaty (termin 7 dni)</option>
+                        </select>
+                    </div>
+                    <div class="flex flex-col justify-center text-right">
+                        <span class="text-[11px] font-semibold text-slate-500">Suma rachunku:</span>
+                        <span id="inv-total-amount" class="text-xl font-extrabold text-indigo-700">0,00 zł</span>
+                        <span id="inv-selected-count" class="text-[10px] text-slate-500">0 lekcji</span>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-invoice')" class="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl">Anuluj</button>
+                    <button type="submit" class="px-5 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm flex items-center gap-2">
+                        <i class="fa-solid fa-file-pdf"></i> Zapisz rachunek i pobierz PDF
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Modal: Dodaj / Edytuj Ucznia -->
     <div id="modal-student" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-40 hidden flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
         <div class="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-xl space-y-4 max-h-[88vh] overflow-y-auto">
@@ -1133,7 +1251,6 @@
                 <input type="hidden" id="stu-id">
                 <input type="hidden" id="stu-school-year-start">
                 
-                <!-- Sekcja 1: Dane ucznia -->
                 <div class="bg-slate-50/80 p-3.5 rounded-xl border border-slate-200/80 space-y-3">
                     <span class="text-[11px] font-bold uppercase tracking-wider text-brand-600 block">Dane ucznia</span>
                     <div>
@@ -1152,7 +1269,6 @@
                     </div>
                 </div>
 
-                <!-- Sekcja 2: Dane rodzica / opiekuna -->
                 <div class="bg-slate-50/80 p-3.5 rounded-xl border border-slate-200/80 space-y-3">
                     <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">Dane kontaktowe rodzica / opiekuna</span>
                     <div>
@@ -1171,7 +1287,6 @@
                     </div>
                 </div>
 
-                <!-- Sekcja 3: Poziom i stawka -->
                 <div class="bg-slate-50/80 p-3.5 rounded-xl border border-slate-200/80 space-y-3">
                     <span class="text-[11px] font-bold uppercase tracking-wider text-brand-600 block">Szkoła, poziom i stawka (auto-awans 1 wrz)</span>
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -1382,5 +1497,6 @@
     </div>
 
     <script src="js/app_part_3.js"></script>
+    <script src="js/app_part_4_invoices.js"></script>
 </body>
 </html>
