@@ -5178,6 +5178,7 @@
         function wbGetCurrentPage() {
             const sec = wbGetCurrentSection();
             if (!sec) return null;
+            wbEnsureHistory(sec.pages[0]);
             return sec.pages[0];
         }
 
@@ -5548,28 +5549,63 @@
             showToast(wbAutoShape ? 'Pismo odręczne na kształty: WŁĄCZONE' : 'Pismo odręczne na kształty: WYŁĄCZONE', 'info');
         }
 
-        function wbUndo() {
-            wbCommitInlineText();
-            wbClearSelection();
-            const page = wbGetCurrentPage();
-            if (!page || page.strokes.length === 0) return;
-            const removed = page.strokes.pop();
-            wbRedoStack.push(removed);
-            wbSyncPageControls();
-            wbRedrawCanvas();
-            wbScheduleSave();
+        // Historia dotyczy bieżącej sesji; każda tablica ma własne operacje.
+        const wbEditHistory = new WeakMap();
+        function wbHistoryClone(value) {
+            if(Array.isArray(value))return value.map(wbHistoryClone);
+            if(value && typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,wbHistoryClone(item)]));
+            return value;
         }
-
-        function wbRedo() {
+        function wbHistorySnapshot(page){return {strokes:wbHistoryClone(page.strokes||[]),pageCount:page.pageCount||1,bg:page.bg||'grid'};}
+        function wbHistoryEqual(a,b){
+            if(a===b)return true;
+            if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
+            const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(key=>Object.prototype.hasOwnProperty.call(b,key)&&wbHistoryEqual(a[key],b[key]));
+        }
+        function wbEnsureHistory(page){
+            if(!page)return null;
+            if(!wbEditHistory.has(page))wbEditHistory.set(page,{past:[],future:[],current:wbHistorySnapshot(page)});
+            return wbEditHistory.get(page);
+        }
+        function wbRecordHistory(page){
+            if(!page)return;
+            const history=wbEnsureHistory(page),next=wbHistorySnapshot(page);
+            if(wbHistoryEqual(history.current,next))return;
+            history.past.push(history.current);
+            if(history.past.length>40)history.past.shift();
+            history.current=next;history.future=[];
+        }
+        function wbRestoreHistory(page,snapshot){
+            const restored=wbHistoryClone(snapshot);
+            page.strokes=restored.strokes;page.pageCount=restored.pageCount;page.bg=restored.bg;
+            wbEnsureHistory(page).current=wbHistorySnapshot(page);
+            wbClearSelection();wbSyncPageControls();wbRedrawCanvas();wbScheduleSave();
+        }
+        function wbUndo() {
+            if(wbIsDrawing)return;
             wbCommitInlineText();
-            wbClearSelection();
-            const page = wbGetCurrentPage();
-            if (!page || wbRedoStack.length === 0) return;
-            const restored = wbRedoStack.pop();
-            page.strokes.push(restored);
-            wbSyncPageControls();
-            wbRedrawCanvas();
-            wbScheduleSave();
+            const page=wbGetCurrentPage();if(!page)return;
+            wbRecordHistory(page);
+            const history=wbEnsureHistory(page);
+            if(history.past.length){
+                history.future.push(history.current);
+                wbRestoreHistory(page,history.past.pop());
+            }else if(page.strokes.length){
+                // Zachowaj możliwość cofania zapisanych wcześniej pociągnięć.
+                history.future.push(history.current);
+                const previous=wbHistorySnapshot(page);previous.strokes.pop();
+                wbRestoreHistory(page,previous);
+            }
+        }
+        function wbRedo() {
+            if(wbIsDrawing)return;
+            wbCommitInlineText();
+            const page=wbGetCurrentPage();if(!page)return;
+            wbRecordHistory(page);
+            const history=wbEnsureHistory(page);if(!history.future.length)return;
+            history.past.push(history.current);
+            if(history.past.length>40)history.past.shift();
+            wbRestoreHistory(page,history.future.pop());
         }
 
         function wbClearCurrentPage() {
@@ -5587,6 +5623,7 @@
         }
 
         function wbScheduleSave() {
+            if(!wbIsDrawing)wbRecordHistory(wbGetCurrentPage());
             const nb = state.whiteboards?.[wbCurrentNotebookId];
             if (nb) nb.updatedAt = new Date().toISOString();
             clearTimeout(wbSaveDebounce);
@@ -6055,7 +6092,8 @@
             const radius = Math.max(12, wbWidth * 2.5);
             const beforeLen = page.strokes.length;
 
-            page.strokes = page.strokes.filter(s => !wbStrokeHitsPoint(s, x, y, radius));
+            // Zdjęcia pozostają na tablicy; gumka usuwa wyłącznie naniesione elementy.
+            page.strokes = page.strokes.filter(s => s.type === 'image' || !wbStrokeHitsPoint(s, x, y, radius));
 
             if (page.strokes.length !== beforeLen) {
                 wbSyncPageControls();
@@ -6108,6 +6146,10 @@
             const nextStrokes = [];
 
             for (const s of page.strokes) {
+                if (s.type === 'image') {
+                    nextStrokes.push(s);
+                    continue;
+                }
                 const effectiveR = radius + (s.width || 2) * 0.35;
                 if (s.points && s.points.length > 0) {
                     if (s.points.length === 1) {
@@ -7208,7 +7250,10 @@
                     return;
                 }
 
-                if (!wbActiveStroke) return;
+                if (!wbActiveStroke) {
+                    wbRecordHistory(wbGetCurrentPage());
+                    return;
+                }
 
                 const page = wbGetCurrentPage();
                 if (page) {
