@@ -246,6 +246,12 @@
                         </svg>
                         <span class="hidden xl:inline">Lasso</span>
                     </button>
+                    <button id="wb-copy-selection" onclick="wbCopySelection()" class="hidden px-2 h-8 rounded-lg text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white" title="Kopiuj zaznaczenie (Ctrl+C)" aria-label="Kopiuj zaznaczenie">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
+                    <button id="wb-paste-selection" onclick="wbPasteSelection(wbClipboard)" class="hidden px-2 h-8 rounded-lg text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white" title="Wklej skopiowane elementy (Ctrl+V)" aria-label="Wklej skopiowane elementy">
+                        <i class="fa-regular fa-paste"></i>
+                    </button>
                     <button onclick="wbSetTool('text')" data-wb-tool="text" class="wb-tool-btn px-2 h-8 rounded-lg text-xs font-semibold flex items-center gap-1 text-zinc-300 hover:bg-zinc-800 transition-all" title="Wpisz tekst (kliknij na kartce)">
                         <i class="fa-solid fa-font text-xs"></i>
                         <span class="hidden xl:inline">Tekst</span>
@@ -327,7 +333,7 @@
                             <button onclick="wbPickShape('circle', 'fa-regular fa-circle')" class="p-2 rounded-lg hover:bg-zinc-800 flex flex-col items-center gap-1 text-[11px] text-zinc-200">
                                 <i class="fa-regular fa-circle text-sm text-purple-300"></i> Okrąg
                             </button>
-                            <button onclick="wbPickShape('triangle', 'fa-solid fa-play -rotate-90')" class="p-2 rounded-lg hover:bg-zinc-800 flex flex-col items-center gap-1 text-[11px] text-zinc-200">
+                            <button onclick="wbPickShape('triangle', 'fa-solid fa-play -rotate-90')" title="Wskaż trzy wierzchołki trójkąta" class="p-2 rounded-lg hover:bg-zinc-800 flex flex-col items-center gap-1 text-[11px] text-zinc-200">
                                 <i class="fa-solid fa-play -rotate-90 text-sm text-purple-300"></i> Trójkąt
                             </button>
                         </div>
@@ -1548,6 +1554,14 @@
         let currentUser = null;
         let isSyncingFromCloud = false;
         let cloudSaveTimer = null;
+        let cloudSaveInFlight = false;
+        let cloudSaveQueued = false;
+        let queuedCloudVersion;
+        let cloudReadInFlight = false;
+        let wbJournalConnection;
+        let wbJournalWrite;
+        let wbPendingRecords = new Map();
+        let wbJournalWarningShown = false;
         let realtimeChannel = null;
         let cloudPollInterval = null;
         let lastCloudUpdatedAt = null;
@@ -1856,7 +1870,79 @@
             }
         }
 
-        function saveState() {
+        function wbOpenJournal() {
+            if (!wbJournalConnection) {
+                wbJournalConnection = new Promise((resolve, reject) => {
+                    const request = indexedDB.open('mathflow-whiteboard-recovery', 1);
+                    request.onupgradeneeded = () => {
+                        const store = request.result.createObjectStore('notebooks', {keyPath: ['userId', 'notebookId']});
+                        store.createIndex('byUser', 'userId');
+                    };
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                    request.onblocked = () => reject(new Error('IndexedDB blocked'));
+                }).catch(error => {
+                    wbJournalConnection = null;
+                    throw error;
+                });
+            }
+            return wbJournalConnection;
+        }
+
+        async function wbJournalTransaction(mode, operation) {
+            const db = await wbOpenJournal();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction('notebooks', mode);
+                const request = operation(transaction.objectStore('notebooks'));
+                transaction.oncomplete = () => resolve(request?.result);
+                transaction.onabort = () => reject(transaction.error);
+            });
+        }
+
+        function wbReportJournalError(error) {
+            console.error('Whiteboard recovery storage error:', error);
+            if (wbJournalWarningShown) return;
+            wbJournalWarningShown = true;
+            showToast('Przeglądarka nie zapisała kopii awaryjnej tablicy. Pozostaw okno otwarte do zakończenia synchronizacji.', 'error');
+        }
+
+        async function wbAcknowledgeRecords(records) {
+            if (!records.length) return;
+            for (const record of records) {
+                const pending = wbPendingRecords.get(record.notebookId);
+                if (pending?.revision === record.revision) wbPendingRecords.delete(record.notebookId);
+            }
+            try {
+                await wbJournalTransaction('readwrite', store => {
+                    for (const record of records) {
+                        const key = [record.userId, record.notebookId];
+                        const request = store.get(key);
+                        request.onsuccess = () => {
+                            if (request.result?.revision === record.revision) store.delete(key);
+                        };
+                    }
+                });
+            } catch (error) {
+                wbReportJournalError(error);
+            }
+        }
+
+        function wbDiscardPendingRecords() {
+            if (!currentUser) return;
+            const userId = currentUser.id;
+            wbPendingRecords.clear();
+            wbJournalTransaction('readwrite', store => {
+                const request = store.index('byUser').getAllKeys(userId);
+                request.onsuccess = () => request.result.forEach(key => store.delete(key));
+            }).catch(wbReportJournalError);
+        }
+
+        function wbPendingNotebooks() {
+            return Object.fromEntries([...wbPendingRecords].map(([id, record]) =>
+                [id, wbHistoryClone(record.notebook)]));
+        }
+
+        function saveState(expectedCloudVersion) {
             try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             } catch (e) {}
@@ -1865,40 +1951,107 @@
 
             setCloudSyncUI('syncing', 'Zapisywanie w chmurze...');
             clearTimeout(cloudSaveTimer);
-            cloudSaveTimer = setTimeout(async () => {
-                try {
-                    const nowIso = new Date().toISOString();
-                    const { error } = await supabaseClient
-                        .from('mathflow_state')
-                        .upsert({
-                            user_id: currentUser.id,
-                            data: state,
-                            updated_at: nowIso
-                        }, { onConflict: 'user_id' });
-
-                    if (error) {
-                        console.error('Supabase save error:', error);
-                        setCloudSyncUI('error', 'Błąd zapisu (sprawdź SQL)');
-                    } else {
-                        lastCloudUpdatedAt = nowIso;
-                        setCloudSyncUI('ok', 'Chmura zsynchronizowana');
-                    }
-                } catch (err) {
-                    console.error('Cloud sync exception:', err);
-                    setCloudSyncUI('error', 'Brak połączenia z chmurą');
-                }
+            cloudSaveTimer = setTimeout(() => {
+                cloudSaveTimer = null;
+                flushCloudSave(expectedCloudVersion);
             }, 350);
         }
 
-        async function loadStateFromCloud(silent = false) {
+        async function flushCloudSave(expectedCloudVersion) {
             if (!currentUser) return;
+            if (cloudSaveInFlight) {
+                cloudSaveQueued = true;
+                queuedCloudVersion = expectedCloudVersion;
+                return;
+            }
+
+            const user = currentUser;
+            const nowIso = new Date().toISOString();
+            const records = [...wbPendingRecords.values()];
+            const whiteboards = {...state.whiteboards};
+            for (const record of records) {
+                const live = whiteboards[record.notebookId];
+                if (!(Date.parse(live?.updatedAt) > Date.parse(record.notebook.updatedAt))) {
+                    whiteboards[record.notebookId] = record.notebook;
+                }
+            }
+            const data = {...state, whiteboards};
+            cloudSaveInFlight = true;
+            cloudSaveQueued = false;
+            try {
+                const table = supabaseClient.from('mathflow_state');
+                let result;
+                if (expectedCloudVersion === undefined) {
+                    result = await table.upsert({ user_id: user.id, data, updated_at: nowIso }, { onConflict: 'user_id' });
+                } else if (expectedCloudVersion === null) {
+                    result = await table.insert({ user_id: user.id, data, updated_at: nowIso });
+                } else {
+                    // Przy ponawianiu zachowaj dane zapisane w międzyczasie przez inne okno.
+                    result = await table.update({ data, updated_at: nowIso })
+                        .eq('user_id', user.id).eq('updated_at', expectedCloudVersion).select('updated_at');
+                }
+                if (currentUser !== user) return;
+                if ((expectedCloudVersion && !result.error && !result.data?.length) ||
+                    (expectedCloudVersion === null && result.error?.code === '23505')) {
+                    setCloudSyncUI('syncing', 'Tablica czeka na ponowienie zapisu...');
+                    return;
+                }
+                const {error} = result;
+                if (error) {
+                    console.error('Supabase save error:', error);
+                    setCloudSyncUI('error', 'Błąd zapisu (sprawdź SQL)');
+                } else {
+                    lastCloudUpdatedAt = nowIso;
+                    await wbAcknowledgeRecords(records.filter(record =>
+                        Date.parse(data.whiteboards[record.notebookId]?.updatedAt) >= Date.parse(record.notebook.updatedAt)));
+                    if (!cloudSaveTimer && !cloudSaveQueued) setCloudSyncUI('ok', 'Chmura zsynchronizowana');
+                }
+            } catch (err) {
+                console.error('Cloud sync exception:', err);
+                if (currentUser === user) setCloudSyncUI('error', 'Brak połączenia z chmurą');
+            } finally {
+                cloudSaveInFlight = false;
+                if (cloudSaveQueued && !cloudSaveTimer) flushCloudSave(queuedCloudVersion);
+            }
+        }
+
+        function hasPendingCloudSave() {
+            return Boolean(cloudSaveTimer || cloudSaveInFlight || wbSaveDebounce);
+        }
+
+        function acceptCloudUpdate(updatedAt) {
+            return !hasPendingCloudSave() &&
+                (!lastCloudUpdatedAt || Date.parse(updatedAt) > Date.parse(lastCloudUpdatedAt));
+        }
+
+        async function loadStateFromCloud(silent = false) {
+            if (!currentUser || cloudReadInFlight || (silent && hasPendingCloudSave())) return;
+            const user = currentUser;
+            cloudReadInFlight = true;
             if (!silent) setCloudSyncUI('syncing', 'Pobieranie z chmury...');
             try {
+                const recovered = await wbJournalTransaction('readonly', store =>
+                    store.index('byUser').getAll(user.id)).catch(error => {
+                        wbReportJournalError(error);
+                        return [];
+                    });
+                if (currentUser !== user) return;
+                for (const record of recovered) {
+                    const pending = wbPendingRecords.get(record.notebookId);
+                    if (!pending || record.notebook.updatedAt > pending.notebook.updatedAt) {
+                        wbPendingRecords.set(record.notebookId, record);
+                    }
+                }
+                if (!silent && wbPendingRecords.size) {
+                    // Wyświetl zapis awaryjny również wtedy, gdy serwer jest niedostępny.
+                    state.whiteboards = {...state.whiteboards, ...wbPendingNotebooks()};
+                }
                 const { data, error } = await supabaseClient
                     .from('mathflow_state')
                     .select('data, updated_at')
-                    .eq('user_id', currentUser.id)
+                    .eq('user_id', user.id)
                     .maybeSingle();
+                if (currentUser !== user) return;
 
                 if (error) {
                     console.error('Supabase fetch error:', error);
@@ -1907,12 +2060,21 @@
                 }
 
                 if (data && data.data) {
-                    if (silent && lastCloudUpdatedAt && data.updated_at === lastCloudUpdatedAt) {
-                        return;
-                    }
+                    const sameCloudVersion = data.updated_at === lastCloudUpdatedAt ||
+                        Date.parse(data.updated_at) === Date.parse(lastCloudUpdatedAt);
+                    if (silent && !acceptCloudUpdate(data.updated_at) &&
+                        !(wbPendingRecords.size && sameCloudVersion && !hasPendingCloudSave())) return;
+                    // Zapis mógł dojść do serwera przed zamknięciem okna, mimo że okno nie odebrało potwierdzenia.
+                    const confirmed = [...wbPendingRecords.values()].filter(record => {
+                        const remote = data.data.whiteboards?.[record.notebookId];
+                        return remote?.updatedAt === record.notebook.updatedAt &&
+                            wbHistoryEqual(remote.sections, record.notebook.sections);
+                    });
+                    wbAcknowledgeRecords(confirmed);
+                    const retryPending = wbPendingRecords.size > 0;
                     lastCloudUpdatedAt = data.updated_at;
                     isSyncingFromCloud = true;
-                    state = {
+                    wbApplySyncedState({
                         ...defaultState,
                         ...data.data,
                         settings: { ...defaultState.settings, ...(data.data.settings || {}) },
@@ -1923,30 +2085,37 @@
                         lessons: data.data.lessons || [],
                         examScores: data.data.examScores || [],
                         whiteboards: data.data.whiteboards || {}
-                    };
+                    }, silent);
                     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
                     runAcademicYearPromotion();
                     populateDashboardYears();
                     populateLessonDropdowns();
                     renderCurrentView();
                     isSyncingFromCloud = false;
-                    setCloudSyncUI('ok', 'Chmura zsynchronizowana');
-                    if (silent) showToast('Zaktualizowano dane z drugiego urządzenia.', 'info');
-                } else if (!silent) {
-                    saveState();
+                    if (retryPending) saveState(data.updated_at ?? undefined);
+                    else {
+                        setCloudSyncUI('ok', 'Chmura zsynchronizowana');
+                        if (silent) showToast('Zaktualizowano dane z drugiego urządzenia.', 'info');
+                    }
+                } else if (!silent || wbPendingRecords.size) {
+                    if (!hasPendingCloudSave()) saveState(wbPendingRecords.size ? null : undefined);
                 }
             } catch (err) {
                 isSyncingFromCloud = false;
                 setCloudSyncUI('error', 'Tryb offline');
+            } finally {
+                cloudReadInFlight = false;
             }
         }
+
+        window.addEventListener('online', () => loadStateFromCloud(true));
 
         function subscribeToRealtimeChanges() {
             if (!currentUser) return;
 
             if (cloudPollInterval) clearInterval(cloudPollInterval);
             cloudPollInterval = setInterval(() => {
-                if (document.visibilityState === 'visible' && !cloudSaveTimer) {
+                if (document.visibilityState === 'visible') {
                     loadStateFromCloud(true);
                 }
             }, 12000);
@@ -1969,21 +2138,22 @@
                             filter: `user_id=eq.${currentUser.id}`
                         },
                         (payload) => {
-                            if (payload.new && payload.new.data && !cloudSaveTimer) {
+                            if (payload.new?.data && acceptCloudUpdate(payload.new.updated_at)) {
                                 lastCloudUpdatedAt = payload.new.updated_at || new Date().toISOString();
                                 isSyncingFromCloud = true;
-                                state = {
+                                wbApplySyncedState({
                                     ...defaultState,
                                     ...payload.new.data,
                                     settings: { ...defaultState.settings, ...(payload.new.data.settings || {}) }
-                                };
+                                });
                                 try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
                                 runAcademicYearPromotion();
                                 populateDashboardYears();
                                 populateLessonDropdowns();
                                 renderCurrentView();
                                 isSyncingFromCloud = false;
-                                setCloudSyncUI('ok', 'Zsynchronizowano na żywo');
+                                if (wbPendingRecords.size) saveState(payload.new.updated_at ?? undefined);
+                                else setCloudSyncUI('ok', 'Zsynchronizowano na żywo');
                             }
                         }
                     )
@@ -2023,8 +2193,14 @@
         }
 
         async function handleSupabaseLogout() {
+            wbFlushSave();
             await supabaseClient.auth.signOut();
             currentUser = null;
+            wbPendingRecords = new Map();
+            lastCloudUpdatedAt = null;
+            clearTimeout(cloudSaveTimer);
+            cloudSaveTimer = null;
+            cloudSaveQueued = false;
             if (cloudPollInterval) clearInterval(cloudPollInterval);
             if (realtimeChannel) {
                 try { supabaseClient.removeChannel(realtimeChannel); } catch (e) {}
@@ -4380,6 +4556,7 @@
                 try {
                     const parsed = JSON.parse(e.target.result);
                     if (!parsed.students || !parsed.lessons) throw new Error('Invalid format');
+                    wbDiscardPendingRecords();
                     state = {
                         ...defaultState,
                         ...parsed,
@@ -4414,6 +4591,7 @@
         function confirmClearAllData() {
             const val = (document.getElementById('clear-confirm-input')?.value || '').trim().toUpperCase();
             if (val !== 'USUŃ' && val !== 'USUN') return;
+            wbDiscardPendingRecords();
             state = {
                 ...JSON.parse(JSON.stringify(defaultState)),
                 students: [],
@@ -4468,10 +4646,15 @@
         let wbHoldConvertedShape = false;
         let wbLastMoveTime = 0;
         let wbLastMovePoint = null;
+        let wbLastShapeCheck = 0;
+        let wbTriangleDraft = [];
+        let wbTriangleTip = null;
+        let wbClipboard = [];
+        const WB_CLIPBOARD_TYPE = 'application/x-mathflow-whiteboard';
         let wbShiftPressed = false;
 
-        let wbRedoStack = [];
         let wbSaveDebounce = null;
+        let wbPendingNotebook = null;
 
         // Wskaźnik laserowy
         let wbLaserStrokes = [];
@@ -4489,6 +4672,69 @@
         // Edytor tekstu na tablicy + cache obrazów
         let wbInlineTextWorldPos = null;
         const wbImageCache = new Map();
+
+        function wbApplySyncedState(incoming, keepLocalBoards = true, fromBrowser = false) {
+            if (wbPendingRecords.size) {
+                // Starszy zapis nie zastępuje tablicy czekającej na wysłanie.
+                incoming.whiteboards = {...incoming.whiteboards};
+                for (const [id, record] of wbPendingRecords) {
+                    const version = incoming.whiteboards[id]?.updatedAt;
+                    if (!fromBrowser || !(Date.parse(version) > Date.parse(record.notebook.updatedAt))) {
+                        incoming.whiteboards[id] = wbHistoryClone(record.notebook);
+                    }
+                }
+            }
+            const previousPage = wbCurrentNotebookId ? wbGetCurrentPage() : null;
+            if (keepLocalBoards) {
+                incoming.whiteboards = { ...incoming.whiteboards };
+                for (const [id, local] of Object.entries(state.whiteboards || {})) {
+                    const remote = incoming.whiteboards[id];
+                    const editing = id === wbCurrentNotebookId && wbIsDrawing;
+                    if (editing || (remote && Date.parse(local.updatedAt) > (Date.parse(remote.updatedAt) || 0)) ||
+                        (!remote && local === wbPendingNotebook)) {
+                        incoming.whiteboards[id] = local;
+                        continue;
+                    }
+                    if (!Array.isArray(remote?.sections) || !Array.isArray(local.sections)) continue;
+                    const localSections = new Map(local.sections.map(section => [section.id, section]));
+                    for (const section of remote.sections) {
+                        normalizeSectionToContinuousPage(section);
+                        const oldSection = localSections.get(section.id);
+                        if (oldSection && wbHistoryEqual(oldSection.pages, section.pages)) {
+                            // Nie zgub historii cofania przy odbiorze identycznych notatek.
+                            section.pages = oldSection.pages;
+                        }
+                    }
+                }
+            }
+
+            state = incoming;
+            if (wbCurrentNotebookId) {
+                if (wbGetCurrentPage() !== previousPage) wbClearSelection();
+                wbPopulateSectionDropdown();
+                wbSyncPageControls();
+                wbRedrawCanvas();
+            }
+        }
+
+        function wbMarkNotebookChanged(notebook) {
+            if (!notebook) return;
+            const previousTime = Date.parse(notebook.updatedAt) || 0;
+            notebook.updatedAt = new Date(Math.max(Date.now(), previousTime + 1)).toISOString();
+            if (!currentUser || !notebook.id) return;
+            const record = {
+                userId: currentUser.id,
+                notebookId: notebook.id,
+                revision: globalThis.crypto?.randomUUID?.() || Math.random().toString(36),
+                notebook: wbHistoryClone(notebook)
+            };
+            wbPendingRecords.set(notebook.id, record);
+            wbJournalWrite = wbJournalTransaction('readwrite', store => store.put(record))
+                .then(() => true, error => {
+                    wbReportJournalError(error);
+                    return false;
+                });
+        }
 
         function ensureWhiteboardsStore() {
             if (!state.whiteboards || typeof state.whiteboards !== 'object') {
@@ -4524,9 +4770,7 @@
                     const offsetY = idx * WB_PAGE_H;
                     (p.strokes || []).forEach(st => {
                         const copy = JSON.parse(JSON.stringify(st));
-                        if (copy.points) copy.points.forEach(pt => { pt.y += offsetY; });
-                        if (copy.y1 !== undefined) copy.y1 += offsetY;
-                        if (copy.y2 !== undefined) copy.y2 += offsetY;
+                        wbOffsetStroke(copy, 0, offsetY);
                         mergedStrokes.push(copy);
                     });
                 });
@@ -4611,6 +4855,7 @@
                     pages: [{ bg: 'grid', strokes: [], pageCount: 1 }]
                 };
                 nb.sections.push(sec);
+                wbMarkNotebookChanged(nb);
                 saveState();
             }
 
@@ -4637,6 +4882,7 @@
                 pages: [{ bg: 'grid', strokes: [], pageCount: 1 }]
             };
             nb.sections.push(newSec);
+            wbMarkNotebookChanged(nb);
             saveState();
             showToast('Dodano nową tablicę.');
 
@@ -4663,6 +4909,7 @@
             if (sec.lessonId && state.whiteboards[sec.lessonId]) {
                 delete state.whiteboards[sec.lessonId];
             }
+            wbMarkNotebookChanged(nb);
             saveState();
             showToast('Usunięto tablicę.', 'info');
 
@@ -4689,6 +4936,7 @@
                 }
             });
             nb.sections = [];
+            wbMarkNotebookChanged(nb);
             saveState();
             showToast('Usunięto wszystkie tablice ucznia.', 'info');
 
@@ -4733,6 +4981,7 @@
                     pages: [{ bg: 'grid', strokes: [], pageCount: 1 }]
                 };
                 nb.sections.push(sec);
+                wbMarkNotebookChanged(nb);
                 saveState();
             }
             openBoardInNewWindow(studentId, sec.id);
@@ -4936,6 +5185,7 @@
                     pages: [{ bg: 'grid', strokes: [], pageCount: 1 }]
                 };
                 nb.sections.push(sec);
+                wbMarkNotebookChanged(nb);
                 saveState();
             }
             openWhiteboardNotebook(nb.id, sec ? sec.id : null);
@@ -4988,7 +5238,6 @@
                 wbCurrentSectionId = nb.sections[nb.sections.length - 1]?.id || null;
             }
             wbCurrentPageIdx = 0;
-            wbRedoStack = [];
             wbClearSelection();
             wbCommitInlineText();
             wbCloseAllDropdowns();
@@ -5032,7 +5281,6 @@
             wbClearSelection();
             wbCurrentSectionId = secId;
             wbCurrentPageIdx = 0;
-            wbRedoStack = [];
             const activeSec = wbGetCurrentSection();
             document.getElementById('wb-subtitle').textContent = activeSec
                 ? `${activeSec.title} • Podział stron PDF przerywaną linią`
@@ -5058,7 +5306,6 @@
             nb.sections.push(newSec);
             wbCurrentSectionId = newSec.id;
             wbCurrentPageIdx = 0;
-            wbRedoStack = [];
             wbClearSelection();
             wbPopulateSectionDropdown();
             wbSyncPageControls();
@@ -5081,6 +5328,7 @@
             if (sec.lessonId && state.whiteboards[sec.lessonId]) {
                 delete state.whiteboards[sec.lessonId];
             }
+            wbMarkNotebookChanged(nb);
             saveState();
             showToast('Usunięto tablicę.', 'info');
 
@@ -5095,14 +5343,13 @@
 
             wbCurrentSectionId = nb.sections[nb.sections.length - 1].id;
             wbCurrentPageIdx = 0;
-            wbRedoStack = [];
             wbClearSelection();
             wbPopulateSectionDropdown();
             wbSyncPageControls();
             wbResetView();
         }
 
-        function closeWhiteboard(fromPopState = false) {
+        async function closeWhiteboard(fromPopState = false) {
             wbCommitInlineText();
             wbClearSelection();
             wbCloseAllDropdowns();
@@ -5111,11 +5358,13 @@
                 try { document.exitFullscreen(); } catch (e) {}
             }
 
+            wbFlushSave();
             if (isStandaloneBoardWindow) {
-                saveState();
+                if (wbPendingRecords.size && await wbJournalWrite === false && wbPendingRecords.size) {
+                    showToast('Poczekaj na zapis tablicy w chmurze przed zamknięciem okna.', 'error');
+                    return;
+                }
                 window.close();
-                // W osobnym oknie tablicy nie otwieraj panelu rozliczeń nawet jeśli window.close() zostanie zablokowane
-                showToast('Zapisano tablicę. Możesz bezpiecznie zamknąć to okno.', 'info');
                 return;
             }
 
@@ -5124,7 +5373,6 @@
                 overlay.classList.add('hidden');
                 wbCurrentNotebookId = null;
                 wbCurrentSectionId = null;
-                saveState();
                 if (activeTab === 'boards') renderBoardsList();
                 else if (activeTab === 'schedule') renderSchedule();
 
@@ -5258,6 +5506,7 @@
             }
             wbSetTool(shapeType);
             wbCloseAllDropdowns();
+            if (shapeType === 'triangle') showToast('Kliknij kolejno trzy wierzchołki trójkąta.', 'info');
         }
 
         // ==================== WIDOK, ZOOM (+ / - / CTRL+SCROLL) I CIĄGŁE PRZEWIJANIE W DÓŁ ====================
@@ -5406,6 +5655,8 @@
         }
 
         function wbSetTool(tool) {
+            wbTriangleDraft = [];
+            wbTriangleTip = null;
             if (wbTool === 'text' && tool !== 'text') {
                 wbCommitInlineText();
             }
@@ -5560,6 +5811,10 @@
         function wbHistoryEqual(a,b){
             if(a===b)return true;
             if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
+            if (Array.isArray(a) || Array.isArray(b)) {
+                return Array.isArray(a) && Array.isArray(b) && a.length === b.length &&
+                    a.every((value, index) => wbHistoryEqual(value, b[index]));
+            }
             const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(key=>Object.prototype.hasOwnProperty.call(b,key)&&wbHistoryEqual(a[key],b[key]));
         }
         function wbEnsureHistory(page){
@@ -5570,15 +5825,16 @@
         function wbRecordHistory(page){
             if(!page)return;
             const history=wbEnsureHistory(page),next=wbHistorySnapshot(page);
-            if(wbHistoryEqual(history.current,next))return;
+            if(wbHistoryEqual(history.current,next))return false;
             history.past.push(history.current);
             if(history.past.length>40)history.past.shift();
             history.current=next;history.future=[];
+            return true;
         }
         function wbRestoreHistory(page,snapshot){
             const restored=wbHistoryClone(snapshot);
             page.strokes=restored.strokes;page.pageCount=restored.pageCount;page.bg=restored.bg;
-            wbEnsureHistory(page).current=wbHistorySnapshot(page);
+            wbEnsureHistory(page).current=snapshot;
             wbClearSelection();wbSyncPageControls();wbRedrawCanvas();wbScheduleSave();
         }
         function wbUndo() {
@@ -5590,11 +5846,6 @@
             if(history.past.length){
                 history.future.push(history.current);
                 wbRestoreHistory(page,history.past.pop());
-            }else if(page.strokes.length){
-                // Zachowaj możliwość cofania zapisanych wcześniej pociągnięć.
-                history.future.push(history.current);
-                const previous=wbHistorySnapshot(page);previous.strokes.pop();
-                wbRestoreHistory(page,previous);
             }
         }
         function wbRedo() {
@@ -5615,7 +5866,6 @@
             if (!page || page.strokes.length === 0) return;
             page.strokes = [];
             page.pageCount = 1;
-            wbRedoStack = [];
             wbSyncPageControls();
             wbResetView();
             wbScheduleSave();
@@ -5623,14 +5873,22 @@
         }
 
         function wbScheduleSave() {
-            if(!wbIsDrawing)wbRecordHistory(wbGetCurrentPage());
-            const nb = state.whiteboards?.[wbCurrentNotebookId];
-            if (nb) nb.updatedAt = new Date().toISOString();
+            wbRecordHistory(wbGetCurrentPage());
+            wbPendingNotebook = state.whiteboards?.[wbCurrentNotebookId];
+            wbMarkNotebookChanged(wbPendingNotebook);
             clearTimeout(wbSaveDebounce);
-            wbSaveDebounce = setTimeout(() => {
-                saveState();
-            }, 500);
+            wbSaveDebounce = setTimeout(wbFlushSave, 500);
         }
+
+        function wbFlushSave() {
+            if (!wbSaveDebounce) return;
+            clearTimeout(wbSaveDebounce);
+            wbSaveDebounce = null;
+            wbPendingNotebook = null;
+            saveState(wbPendingRecords.size ? lastCloudUpdatedAt : undefined);
+        }
+
+        window.addEventListener('pagehide', wbFlushSave);
 
         // ==================== WKLEJANIE I WSTAWIANIE OBRAZÓW (CTRL+V / PLIK) ====================
         function wbTriggerImageUpload() {
@@ -5710,7 +5968,6 @@
                     wbSelectedIndices.clear();
                     wbSelectedIndices.add(newIdx);
                     wbUpdateDeleteBtnVisibility();
-                    wbRedoStack = [];
                     wbSyncPageControls();
                     wbRedrawCanvas();
                     wbScheduleSave();
@@ -5763,7 +6020,6 @@
                         color: wbColor,
                         width: wbWidth
                     });
-                    wbRedoStack = [];
                     wbSyncPageControls();
                     wbScheduleSave();
                 }
@@ -5777,10 +6033,10 @@
 
         // ==================== ZAZNACZANIE, PRZESUWANIE I SKALOWANIE OBIEKTÓW ====================
         function wbUpdateDeleteBtnVisibility() {
-            const delBtn = document.getElementById('wb-lasso-delete-btn');
-            if (!delBtn) return;
-            if (wbSelectedIndices.size > 0) delBtn.classList.remove('hidden');
-            else delBtn.classList.add('hidden');
+            const hasSelection = wbSelectedIndices.size > 0;
+            document.getElementById('wb-lasso-delete-btn')?.classList.toggle('hidden', !hasSelection);
+            document.getElementById('wb-copy-selection')?.classList.toggle('hidden', !hasSelection);
+            document.getElementById('wb-paste-selection')?.classList.toggle('hidden', !wbClipboard.length);
         }
 
         function wbClearSelection() {
@@ -5790,13 +6046,72 @@
             wbActiveHandle = null;
             wbResizeOrigBBox = null;
             wbResizeOrigStrokes = null;
+            wbTriangleDraft = [];
+            wbTriangleTip = null;
             wbUpdateDeleteBtnVisibility();
         }
 
+        function wbGetSelectedStrokes(page) {
+            return page ? page.strokes.filter((_, idx) => wbSelectedIndices.has(idx)) : [];
+        }
+
+        function wbCopySelection(clipboardData) {
+            const selected = wbGetSelectedStrokes(wbGetCurrentPage());
+            if (!selected.length || wbIsDrawing) return false;
+            if (!clipboardData && document.execCommand) {
+                const before = wbClipboard;
+                document.execCommand('copy');
+                if (wbClipboard !== before) return true;
+            }
+            wbClipboard = wbHistoryClone(selected);
+            if (clipboardData) clipboardData.setData(WB_CLIPBOARD_TYPE, JSON.stringify(wbClipboard));
+            wbUpdateDeleteBtnVisibility();
+            showToast('Skopiowano zaznaczone elementy.', 'info');
+            return true;
+        }
+
+        function wbPasteSelection(strokes) {
+            const page = wbGetCurrentPage();
+            if (!page || wbIsDrawing || !strokes.length) return;
+            const copies = wbHistoryClone(strokes);
+            const boxes = copies.map(wbGetStrokeBBox);
+            const minX = Math.min(...boxes.map(box => box.minX));
+            const maxX = Math.max(...boxes.map(box => box.maxX));
+            const minY = Math.min(...boxes.map(box => box.minY));
+            const maxY = Math.max(...boxes.map(box => box.maxY));
+            const dx = Math.max(-minX, Math.min(24, WB_PAGE_W - maxX));
+            const dy = Math.max(-minY, Math.min(24, wbGetCanvasLogicalHeight(page) - maxY));
+
+            wbSetTool('select');
+            wbSelectedIndices.clear();
+            for (const stroke of copies) {
+                wbOffsetStroke(stroke, dx, dy);
+                wbSelectedIndices.add(page.strokes.length);
+                page.strokes.push(stroke);
+            }
+            wbUpdateDeleteBtnVisibility();
+            wbSyncPageControls();
+            wbRedrawCanvas();
+            wbScheduleSave();
+            showToast('Wklejono zaznaczone elementy.', 'info');
+        }
+
+        function wbOffsetStroke(stroke, dx, dy) {
+            for (const point of stroke.vertices || stroke.points || []) {
+                point.x += dx;
+                point.y += dy;
+            }
+            if (stroke.x1 !== undefined) stroke.x1 += dx;
+            if (stroke.y1 !== undefined) stroke.y1 += dy;
+            if (stroke.x2 !== undefined) stroke.x2 += dx;
+            if (stroke.y2 !== undefined) stroke.y2 += dy;
+        }
+
         function wbGetStrokeBBox(s) {
-            if (s.points && s.points.length) {
+            const points = s.vertices || s.points;
+            if (points?.length) {
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                for (const p of s.points) {
+                for (const p of points) {
                     if (p.x < minX) minX = p.x;
                     if (p.y < minY) minY = p.y;
                     if (p.x > maxX) maxX = p.x;
@@ -5960,13 +6275,7 @@
             wbSelectedIndices.forEach(idx => {
                 const s = page.strokes[idx];
                 if (!s) return;
-                if (s.points) {
-                    s.points.forEach(p => { p.x += dx; p.y += dy; });
-                }
-                if (s.x1 !== undefined) s.x1 += dx;
-                if (s.y1 !== undefined) s.y1 += dy;
-                if (s.x2 !== undefined) s.x2 += dx;
-                if (s.y2 !== undefined) s.y2 += dy;
+                wbOffsetStroke(s, dx, dy);
             });
             wbSyncPageControls();
         }
@@ -6029,8 +6338,9 @@
             wbResizeOrigStrokes.forEach((origS, idx) => {
                 const curS = page.strokes[idx];
                 if (!curS) return;
-                if (origS.points) {
-                    curS.points = origS.points.map(p => ({
+                const pointsKey = origS.vertices ? 'vertices' : 'points';
+                if (origS[pointsKey]) {
+                    curS[pointsKey] = origS[pointsKey].map(p => ({
                         x: newMinX + (p.x - ob.minX) * sx,
                         y: newMinY + (p.y - ob.minY) * sy
                     }));
@@ -6068,6 +6378,12 @@
         }
 
         function wbStrokeHitsPoint(s, x, y, radius) {
+            if (s.vertices) {
+                return s.vertices.some((point, index) => {
+                    const next = s.vertices[(index + 1) % s.vertices.length];
+                    return wbDistanceToSegment(x, y, point.x, point.y, next.x, next.y) <= radius + (s.width || 3) / 2;
+                });
+            }
             if (s.points && s.points.length) {
                 if (s.points.length === 1) {
                     return Math.hypot(s.points[0].x - x, s.points[0].y - y) <= radius + (s.width || 3) / 2;
@@ -6098,7 +6414,6 @@
             if (page.strokes.length !== beforeLen) {
                 wbSyncPageControls();
                 wbRedrawCanvas();
-                wbScheduleSave();
             }
         }
 
@@ -6245,7 +6560,6 @@
                 page.strokes = nextStrokes;
                 wbSyncPageControls();
                 wbRedrawCanvas();
-                wbScheduleSave();
             }
         }
 
@@ -6302,83 +6616,147 @@
 
         // ==================== ROZPOZNAWANIE ODRĘCZNYCH KSZTAŁTÓW (HOLD-TO-SHAPE) ====================
         function recognizeHandDrawnShape(points) {
-            if (!points || points.length < 6) return null;
-
+            if (points.length < 2) return null;
             const first = points[0];
             const last = points[points.length - 1];
-            let pathLen = 0;
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+            let minX = first.x, maxX = first.x, minY = first.y, maxY = first.y;
+            let length = 0;
+            points.forEach((point, index) => {
+                minX = Math.min(minX, point.x);
+                maxX = Math.max(maxX, point.x);
+                minY = Math.min(minY, point.y);
+                maxY = Math.max(maxY, point.y);
+                if (index) length += distance(point, points[index - 1]);
+            });
 
-            for (let i = 0; i < points.length; i++) {
-                const p = points[i];
-                if (p.x < minX) minX = p.x;
-                if (p.x > maxX) maxX = p.x;
-                if (p.y < minY) minY = p.y;
-                if (p.y > maxY) maxY = p.y;
-                if (i > 0) {
-                    pathLen += Math.hypot(p.x - points[i - 1].x, p.y - points[i - 1].y);
+            const width = maxX - minX, height = maxY - minY;
+            const diagonal = Math.hypot(width, height);
+            if (diagonal * wbZoom < 16) return null;
+            const gap = distance(first, last);
+            const deviation = (point, a, b) => wbDistanceToSegment(point.x, point.y, a.x, a.y, b.x, b.y);
+
+            if (gap / length > 0.94 && points.every(point => deviation(point, first, last) <= Math.max(2 / wbZoom, gap * 0.045))) {
+                const angle = Math.atan2(last.y - first.y, last.x - first.x);
+                const nearlyHorizontal = Math.abs(Math.sin(angle)) < 0.075;
+                const nearlyVertical = Math.abs(Math.cos(angle)) < 0.075;
+                return { type: 'line', x1: first.x, y1: first.y,
+                    x2: nearlyVertical ? first.x : last.x, y2: nearlyHorizontal ? first.y : last.y };
+            }
+
+            if (points.length < 4 || gap > Math.max(8 / wbZoom, diagonal * 0.23) || Math.min(width, height) * wbZoom < 10) return null;
+
+            // Zacznij upraszczanie zamkniętego konturu od dwóch odległych od siebie punktów.
+            const farthest = (from) => points.reduce((best, point, index) =>
+                distance(point, from) > distance(points[best], from) ? index : best, 0);
+            let start = farthest(first);
+            let end = farthest(points[start]);
+            if (start > end) [start, end] = [end, start];
+            const sideA = points.slice(start, end + 1);
+            const sideB = points.slice(end).concat(points.slice(0, start + 1));
+
+            const simplify = (side, tolerance) => {
+                const keep = [0];
+                const ranges = [[0, side.length - 1]];
+                while (ranges.length) {
+                    const [from, to] = ranges.pop();
+                    let split = from, maxError = tolerance;
+                    for (let i = from + 1; i < to; i++) {
+                        const error = deviation(side[i], side[from], side[to]);
+                        if (error > maxError) { maxError = error; split = i; }
+                    }
+                    if (split > from) {
+                        keep.push(split);
+                        ranges.push([from, split], [split, to]);
+                    }
+                }
+                keep.push(side.length - 1);
+                return keep.sort((a, b) => a - b).map(index => side[index]);
+            };
+
+            for (const fraction of [0.035, 0.052, 0.07]) {
+                const tolerance = diagonal * fraction;
+                const vertices = simplify(sideA, tolerance).slice(0, -1).concat(simplify(sideB, tolerance).slice(0, -1));
+                // Początek uproszczenia może wypaść w środku boku.
+                for (let i = vertices.length - 1; i >= 0 && vertices.length > 3; i--) {
+                    const before = vertices[(i + vertices.length - 1) % vertices.length];
+                    const after = vertices[(i + 1) % vertices.length];
+                    if (deviation(vertices[i], before, after) < tolerance) vertices.splice(i, 1);
+                }
+                if (vertices.length !== 3 && vertices.length !== 4) continue;
+                const edges = vertices.map((point, index) => {
+                    const next = vertices[(index + 1) % vertices.length];
+                    return {x: next.x - point.x, y: next.y - point.y, length: distance(next, point)};
+                });
+                if (edges.some(edge => edge.length < diagonal * 0.12)) continue;
+                const fit = points.every(point => vertices.some((corner, index) =>
+                    deviation(point, corner, vertices[(index + 1) % vertices.length]) <= diagonal * 0.06));
+                const perimeter = edges.reduce((sum, edge) => sum + edge.length, 0);
+                if (!fit || length + gap > perimeter * 1.24) continue;
+                if (vertices.length === 3) {
+                    const [a, b] = edges;
+                    if (Math.abs(a.x * b.y - a.y * b.x) > diagonal ** 2 * 0.065) return {type:'triangle', vertices};
+                    continue;
+                }
+                const orthogonal = edges.every((edge, index) => {
+                    const next = edges[(index + 1) % 4];
+                    return Math.abs(edge.x * next.x + edge.y * next.y) < 0.33 * edge.length * next.length;
+                });
+                if (orthogonal) {
+                    const angle = Math.atan2(edges[0].y - edges[2].y, edges[0].x - edges[2].x);
+                    const c = Math.cos(angle), d = Math.sin(angle);
+                    const projected = vertices.map(p => ({x: p.x * c + p.y * d, y: -p.x * d + p.y * c}));
+                    const left = Math.min(...projected.map(p => p.x)), right = Math.max(...projected.map(p => p.x));
+                    const top = Math.min(...projected.map(p => p.y)), bottom = Math.max(...projected.map(p => p.y));
+                    return {type:'rect', vertices: [[left, top], [right, top], [right, bottom], [left, bottom]]
+                        .map(([x, y]) => ({x: x * c - y * d, y: x * d + y * c}))};
                 }
             }
 
-            const width = maxX - minX;
-            const height = maxY - minY;
-            const diag = Math.hypot(width, height);
-            if (diag < 22 || pathLen < 20) return null;
-
-            const endDist = Math.hypot(last.x - first.x, last.y - first.y);
-
-            if (endDist / pathLen > 0.86) {
-                let x1 = first.x, y1 = first.y, x2 = last.x, y2 = last.y;
-                if (Math.abs(y2 - y1) < 10) y2 = y1;
-                if (Math.abs(x2 - x1) < 10) x2 = x1;
-                return { type: 'line', x1, y1, x2, y2 };
-            }
-
-            const isClosed = endDist < Math.max(44, diag * 0.30);
-            if (!isClosed) return null;
-
-            const cx = (minX + maxX) / 2;
-            const cy = (minY + maxY) / 2;
-            const rx = width / 2;
-            const ry = height / 2;
-
-            if (rx > 10 && ry > 10) {
-                let radialErrSum = 0;
-                for (const p of points) {
-                    const nx = (p.x - cx) / rx;
-                    const ny = (p.y - cy) / ry;
-                    const r = Math.hypot(nx, ny);
-                    radialErrSum += Math.abs(r - 1);
+            const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+            const rx = width / 2, ry = height / 2;
+            let error = 0, previousAngle, turn = 0, totalTurn = 0;
+            points.forEach(point => {
+                const x = (point.x - cx) / rx, y = (point.y - cy) / ry;
+                error += Math.abs(Math.hypot(x, y) - 1);
+                const angle = Math.atan2(y, x);
+                if (previousAngle !== undefined) {
+                    const step = angle - previousAngle;
+                    const signedStep = Math.atan2(Math.sin(step), Math.cos(step));
+                    turn += signedStep;
+                    totalTurn += Math.abs(signedStep);
                 }
-                if (radialErrSum / points.length < 0.14) {
-                    const avgR = (rx + ry) / 2;
-                    return { type: 'circle', x1: cx - avgR, y1: cy - avgR, x2: cx + avgR, y2: cy + avgR };
+                previousAngle = angle;
+            });
+            if (points.length >= 8 && error / points.length < 0.13 &&
+                Math.abs(turn) > 5.3 && Math.abs(turn) < 7 && totalTurn < 8) {
+                const radius = (rx + ry) / 2;
+                const nearlyRound = Math.abs(rx - ry) < radius * 0.18;
+                return {type:'circle', x1: cx - (nearlyRound ? radius : rx), y1: cy - (nearlyRound ? radius : ry),
+                    x2: cx + (nearlyRound ? radius : rx), y2: cy + (nearlyRound ? radius : ry)};
+            }
+            return null;
+        }
+
+        function wbAddTriangleVertex(point) {
+            const page = wbGetCurrentPage();
+            if (!page || wbTriangleDraft.some(vertex => Math.hypot(vertex.x - point.x, vertex.y - point.y) * wbZoom < 4)) return;
+            if (wbTriangleDraft.length === 2) {
+                const [a, b] = wbTriangleDraft;
+                const height = Math.abs((b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)) / Math.hypot(b.x - a.x, b.y - a.y);
+                if (height * wbZoom < 4) {
+                    showToast('Wskaż trzeci punkt poza linią utworzoną przez pierwsze dwa.', 'info');
+                    return;
                 }
+                page.strokes.push({type:'triangle', vertices:[...wbTriangleDraft, point], color:wbColor, width:wbWidth});
+                wbTriangleDraft = [];
+                wbSyncPageControls();
+                wbScheduleSave();
+            } else {
+                wbTriangleDraft.push(point);
             }
-
-            const step = Math.max(2, Math.floor(points.length / 26));
-            const sampled = [];
-            for (let i = 0; i < points.length; i += step) sampled.push(points[i]);
-
-            let corners = 0;
-            for (let i = 1; i < sampled.length - 1; i++) {
-                const v1x = sampled[i].x - sampled[i - 1].x;
-                const v1y = sampled[i].y - sampled[i - 1].y;
-                const v2x = sampled[i + 1].x - sampled[i].x;
-                const v2y = sampled[i + 1].y - sampled[i].y;
-                const l1 = Math.hypot(v1x, v1y);
-                const l2 = Math.hypot(v2x, v2y);
-                if (l1 > 5 && l2 > 5) {
-                    const cosA = (v1x * v2x + v1y * v2y) / (l1 * l2);
-                    const angle = Math.acos(Math.max(-1, Math.min(1, cosA))) * (180 / Math.PI);
-                    if (angle > 50) corners++;
-                }
-            }
-
-            if (corners >= 2 && corners <= 3) {
-                return { type: 'triangle', x1: minX, y1: minY, x2: maxX, y2: maxY };
-            }
-            return { type: 'rect', x1: minX, y1: minY, x2: maxX, y2: maxY };
+            wbTriangleTip = null;
+            wbRedrawCanvas();
         }
 
         function constrainShapeWithShift(stroke, rawX, rawY) {
@@ -6485,6 +6863,17 @@
             ctx.stroke();
         }
 
+        function wbLoadImage(src) {
+            let image = wbImageCache.get(src);
+            if (!image) {
+                image = new Image();
+                image.onload = () => wbRedrawCanvas();
+                image.src = src;
+                wbImageCache.set(src, image);
+            }
+            return image;
+        }
+
         function renderStrokeToCtx(ctx, s) {
             ctx.save();
             ctx.lineCap = 'round';
@@ -6495,13 +6884,7 @@
             ctx.globalAlpha = s.alpha ?? 1;
 
             if (s.type === 'image' && s.src) {
-                let img = wbImageCache.get(s.src);
-                if (!img) {
-                    img = new Image();
-                    img.onload = () => wbRedrawCanvas();
-                    img.src = s.src;
-                    wbImageCache.set(s.src, img);
-                }
+                const img = wbLoadImage(s.src);
                 const x = Math.min(s.x1, s.x2);
                 const y = Math.min(s.y1, s.y2);
                 const w = Math.abs(s.x2 - s.x1);
@@ -6512,6 +6895,12 @@
                     ctx.strokeStyle = '#94a3b8';
                     ctx.strokeRect(x, y, w, h);
                 }
+            } else if (s.vertices?.length) {
+                ctx.beginPath();
+                ctx.moveTo(s.vertices[0].x, s.vertices[0].y);
+                for (const point of s.vertices.slice(1)) ctx.lineTo(point.x, point.y);
+                ctx.closePath();
+                ctx.stroke();
             } else if (s.type === 'freehand' || s.type === 'highlighter') {
                 const pts = s.points || [];
                 if (pts.length === 1) {
@@ -6668,6 +7057,25 @@
                 renderStrokeToCtx(ctx, wbActiveStroke);
             }
 
+            if (wbTriangleDraft.length) {
+                ctx.save();
+                ctx.strokeStyle = ctx.fillStyle = wbColor;
+                ctx.lineWidth = wbWidth;
+                ctx.setLineDash([6 / wbZoom, 4 / wbZoom]);
+                ctx.beginPath();
+                ctx.moveTo(wbTriangleDraft[0].x, wbTriangleDraft[0].y);
+                for (const point of wbTriangleDraft.slice(1)) ctx.lineTo(point.x, point.y);
+                if (wbTriangleTip) ctx.lineTo(wbTriangleTip.x, wbTriangleTip.y);
+                if (wbTriangleDraft.length === 2 && wbTriangleTip) ctx.closePath();
+                ctx.stroke();
+                for (const point of wbTriangleDraft) {
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 3 / wbZoom, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
             if (wbLassoPolygon && wbLassoPolygon.length > 1) {
                 ctx.save();
                 ctx.strokeStyle = '#9333ea';
@@ -6758,6 +7166,7 @@
             const canvas = document.getElementById('wb-canvas');
             const textEditor = document.getElementById('wb-inline-text-editor');
             if (!canvas) return;
+            let trianglePointer = null;
 
             document.addEventListener('pointerdown', (e) => {
                 if (!e.target.closest('#wb-dd-eraser-wrap') &&
@@ -6825,40 +7234,18 @@
             const startHoldShapeWatcher = () => {
                 clearInterval(wbHoldShapeTimer);
                 wbHoldConvertedShape = false;
+                wbLastShapeCheck = 0;
                 wbHoldShapeTimer = setInterval(() => {
                     if (!wbIsDrawing || !wbAutoShape || wbHoldConvertedShape) return;
-                    if (!wbActiveStroke || !['freehand', 'highlighter'].includes(wbActiveStroke.type) || !wbActiveStroke.points) return;
-                    const idleMs = Date.now() - wbLastMoveTime;
-                    if (idleMs >= 420 && wbActiveStroke.points.length >= 6) {
-                        const isHighlighter = wbActiveStroke.type === 'highlighter';
-                        const recognized = recognizeHandDrawnShape(wbActiveStroke.points);
-                        if (recognized) {
-                            wbHoldConvertedShape = true;
-                            wbActiveStroke = {
-                                ...recognized,
-                                color: wbActiveStroke.color,
-                                width: wbActiveStroke.width,
-                                alpha: isHighlighter ? 0.32 : 1
-                            };
-                            wbRedrawCanvas();
-                        } else if (isHighlighter) {
-                            const first = wbActiveStroke.points[0];
-                            const last = wbActiveStroke.points[wbActiveStroke.points.length - 1];
-                            if (Math.hypot(last.x - first.x, last.y - first.y) >= 16) {
-                                wbHoldConvertedShape = true;
-                                let x1 = first.x, y1 = first.y, x2 = last.x, y2 = last.y;
-                                if (Math.abs(y2 - y1) < 12) y2 = y1;
-                                if (Math.abs(x2 - x1) < 12) x2 = x1;
-                                wbActiveStroke = {
-                                    type: 'line',
-                                    x1, y1, x2, y2,
-                                    color: wbActiveStroke.color,
-                                    width: wbActiveStroke.width,
-                                    alpha: 0.32
-                                };
-                                wbRedrawCanvas();
-                            }
-                        }
+                    const stroke = wbActiveStroke;
+                    if (!stroke?.points || stroke.points.length < 2 || wbLastShapeCheck === stroke.points.length ||
+                        Date.now() - wbLastMoveTime < 420) return;
+                    wbLastShapeCheck = stroke.points.length;
+                    const recognized = recognizeHandDrawnShape(stroke.points);
+                    if (recognized) {
+                        wbHoldConvertedShape = true;
+                        wbActiveStroke = {...recognized, color:stroke.color, width:stroke.width, alpha:stroke.alpha};
+                        wbRedrawCanvas();
                     }
                 }, 90);
             };
@@ -6869,11 +7256,14 @@
 
                 // Śledzenie gestów wielodotykowych na smartfonie (2 palce = przewijanie / pinch-to-zoom)
                 if (e.pointerType === 'touch') {
+                    if (wbActivePointerId !== null && !wbActiveTouchPointers.has(wbActivePointerId)) return;
                     wbActiveTouchPointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
                     if (wbActiveTouchPointers.size === 2) {
+                        trianglePointer = null;
                         // Przerwij ewentualne rozpoczęte pojedynczym palcem kreski i przełącz na płynne przewijanie / zoom
                         clearInterval(wbHoldShapeTimer);
                         wbIsDrawing = false;
+                        if (!wbActiveStroke && wbRecordHistory(wbGetCurrentPage())) wbScheduleSave();
                         wbActiveStroke = null;
                         wbActivePointerId = null;
                         const pts = Array.from(wbActiveTouchPointers.values());
@@ -6927,6 +7317,13 @@
 
                 if (wbTool === 'text') {
                     wbOpenInlineTextAt(x, y);
+                    return;
+                }
+                if (wbTool === 'triangle' && e.buttons !== 32) {
+                    if (e.button === 0 && wbActiveTouchPointers.size < 2 && !trianglePointer) {
+                        trianglePointer = {id:e.pointerId, sx, sy};
+                        try { canvas.setPointerCapture(e.pointerId); } catch {}
+                    }
                     return;
                 }
 
@@ -7087,13 +7484,17 @@
                 }
 
                 // Ignoruj zdarzenia z innego wskaźnika niż aktywny (zapobiega przeskokom dłoń/piórko)
-                if ((wbIsDrawing || wbIsPanning) && wbActivePointerId !== null && wbActivePointerId !== e.pointerId) {
+                if ((wbIsDrawing || wbIsPanning) && wbActivePointerId !== e.pointerId) {
                     return;
                 }
 
                 const { sx, sy, x, y } = getWorldCoords(e);
 
                 if (!wbIsDrawing && !wbIsPanning) {
+                    if (wbTool === 'triangle' && wbTriangleDraft.length && e.pointerType !== 'touch') {
+                        wbTriangleTip = {x, y};
+                        wbRedrawCanvas();
+                    }
                     if (wbTool === 'select' || wbTool === 'lasso') {
                         const page = wbGetCurrentPage();
                         const hit = wbHitTestHandle(x, y, page);
@@ -7161,35 +7562,28 @@
                     return;
                 }
 
-                if (!wbActiveStroke) return;
-
-                if (wbHoldConvertedShape && !wbActiveStroke.points) {
-                    constrainShapeWithShift(wbActiveStroke, x, y);
-                    wbRedrawCanvas();
-                    return;
-                }
-
-                // Wykorzystaj coalescedEvents z tabletu graficznego (gdy dostępne), aby krzywe były idealnie gładkie bez skoków
-                const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
-                const eventsList = coalesced.length ? coalesced : [e];
-                const rect = canvas.getBoundingClientRect();
+                if (!wbActiveStroke || wbHoldConvertedShape) return;
 
                 if (wbActiveStroke.points) {
-                    for (const ev of eventsList) {
-                        const csx = Math.round((ev.clientX - rect.left) * 100) / 100;
-                        const csy = Math.round((ev.clientY - rect.top) * 100) / 100;
-                        const pt = getWorldCoordsFromScreen(csx, csy);
-                        const lastPt = wbActiveStroke.points[wbActiveStroke.points.length - 1];
-                        const stepDist = lastPt ? Math.hypot(pt.x - lastPt.x, pt.y - lastPt.y) : 999;
-
-                        // Odfiltruj mikrodrgania (0.4 px) oraz nagłe nienaturalne skoki artefaktowe (> 220 px w 1 próbce)
-                        if (stepDist * wbZoom >= 0.15 && stepDist < 220) {
-                            maybeAutoExtendOnBottomEdge(pt.y);
-                            wbActiveStroke.points.push({ x: pt.x, y: pt.y });
-                            if (!wbLastMovePoint || Math.hypot(pt.x - wbLastMovePoint.x, pt.y - wbLastMovePoint.y) > 2.2) {
-                                wbLastMoveTime = Date.now();
-                                wbLastMovePoint = { x: pt.x, y: pt.y };
-                            }
+                    const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+                    const samples = coalesced.length ? coalesced : [e];
+                    const rect = canvas.getBoundingClientRect();
+                    const page = wbGetCurrentPage();
+                    let height = wbGetCanvasLogicalHeight(page);
+                    for (const sample of samples) {
+                        const x = Math.max(0, Math.min(WB_PAGE_W, (sample.clientX - rect.left - wbPanX) / wbZoom));
+                        const y = Math.max(0, Math.min(height, (sample.clientY - rect.top - wbPanY) / wbZoom));
+                        const points = wbActiveStroke.points;
+                        const last = points[points.length - 1];
+                        if (Math.hypot(x - last.x, y - last.y) * wbZoom < 0.3) continue;
+                        if (y > height - 80) {
+                            maybeAutoExtendOnBottomEdge(y);
+                            height = wbGetCanvasLogicalHeight(page);
+                        }
+                        points.push({x, y});
+                        if (Math.hypot(x - wbLastMovePoint.x, y - wbLastMovePoint.y) * wbZoom > 1.25) {
+                            wbLastMoveTime = Date.now();
+                            wbLastMovePoint = {x, y};
                         }
                     }
                 } else {
@@ -7213,6 +7607,15 @@
                     }
                 }
 
+                if (e && trianglePointer?.id === e.pointerId) {
+                    const start = trianglePointer;
+                    trianglePointer = null;
+                    if (wbTool === 'triangle' && e.type === 'pointerup') {
+                        const {sx, sy, x, y, insidePage} = getWorldCoords(e);
+                        if (insidePage && Math.hypot(sx - start.sx, sy - start.sy) < 10) wbAddTriangleVertex({x, y});
+                    }
+                    return;
+                }
                 if (e && wbActivePointerId !== null && wbActivePointerId !== e.pointerId) {
                     return;
                 }
@@ -7251,18 +7654,19 @@
                 }
 
                 if (!wbActiveStroke) {
-                    wbRecordHistory(wbGetCurrentPage());
+                    if (wbRecordHistory(wbGetCurrentPage())) wbScheduleSave();
                     return;
                 }
 
                 const page = wbGetCurrentPage();
                 if (page) {
-                    if(e && e.type==='pointerup' && wbActiveStroke.points){
-                        const endpoint=getWorldCoords(e),last=wbActiveStroke.points[wbActiveStroke.points.length-1];
-                        if(last&&Math.hypot(endpoint.x-last.x,endpoint.y-last.y)>0.05&&Math.hypot(endpoint.x-last.x,endpoint.y-last.y)<220)wbActiveStroke.points.push({x:endpoint.x,y:endpoint.y});
+                    if (e?.type === 'pointerup' && wbActiveStroke.points) {
+                        const {x, y} = getWorldCoords(e);
+                        const last = wbActiveStroke.points[wbActiveStroke.points.length - 1];
+                        if (Math.hypot(x - last.x, y - last.y) * wbZoom >= 0.3) wbActiveStroke.points.push({x, y});
                     }
-                    let finalStroke = wbActiveStroke;
-                    if (!finalStroke.points) {
+                    const finalStroke = wbActiveStroke;
+                    if (!finalStroke.points && !finalStroke.vertices) {
                         const dist = Math.hypot((finalStroke.x2 ?? finalStroke.x1) - finalStroke.x1, (finalStroke.y2 ?? finalStroke.y1) - finalStroke.y1);
                         if (dist < 4) {
                             wbActiveStroke = null;
@@ -7273,7 +7677,6 @@
                     }
 
                     page.strokes.push(finalStroke);
-                    wbRedoStack = [];
                     wbSyncPageControls();
                     wbScheduleSave();
                 }
@@ -7284,6 +7687,7 @@
 
             canvas.addEventListener('pointerup', finishStroke);
             canvas.addEventListener('pointercancel', finishStroke);
+            canvas.addEventListener('lostpointercapture', finishStroke);
 
             // Ctrl + Scroll = Przybliżanie / Oddalanie; zwykły scroll = płynne przewijanie ciągłej kartki w dół/górę
             canvas.addEventListener('wheel', (e) => {
@@ -7303,21 +7707,49 @@
                 wbRedrawCanvas();
             }, { passive: false });
 
-            // Wklejanie zrzutów ekranu i obrazów skrótem Ctrl+V
-            window.addEventListener('paste', (e) => {
-                if (!wbCurrentNotebookId) return;
+            const isTextEditing = (event) => {
                 const editor = document.getElementById('wb-inline-text-editor');
-                if (editor && !editor.classList.contains('hidden')) return;
+                return (editor && !editor.classList.contains('hidden')) ||
+                    event.target?.matches?.('input, textarea, select, [contenteditable="true"]');
+            };
 
-                const items = e.clipboardData?.items;
-                if (!items) return;
-                for (const item of items) {
+            window.addEventListener('copy', (event) => {
+                if (!wbCurrentNotebookId || !event.clipboardData || isTextEditing(event)) return;
+                if (wbCopySelection(event.clipboardData)) event.preventDefault();
+            });
+
+            window.addEventListener('paste', (event) => {
+                if (!wbCurrentNotebookId || !event.clipboardData || isTextEditing(event)) return;
+                const clipboard = event.clipboardData;
+                const objects = clipboard.getData(WB_CLIPBOARD_TYPE);
+                if (objects) {
+                    let strokes;
+                    try { strokes = JSON.parse(objects); } catch { return; }
+                    const isPoint = point => point && Number.isFinite(point.x) && Number.isFinite(point.y);
+                    const isStroke = stroke => {
+                        if (!stroke || typeof stroke.type !== 'string') return false;
+                        const points = stroke.vertices || stroke.points;
+                        if (points) return Array.isArray(points) && points.length > 0 && points.every(isPoint);
+                        return Number.isFinite(stroke.x1) && Number.isFinite(stroke.y1) &&
+                            (stroke.type !== 'image' || (typeof stroke.src === 'string' && /^data:image\//i.test(stroke.src)));
+                    };
+                    if (Array.isArray(strokes) && strokes.every(isStroke)) {
+                        event.preventDefault();
+                        wbPasteSelection(strokes);
+                    }
+                    return;
+                }
+                for (const item of clipboard.items || []) {
                     if (item.type.startsWith('image/')) {
-                        e.preventDefault();
+                        event.preventDefault();
                         const blob = item.getAsFile();
                         if (blob) wbInsertImageBlob(blob);
                         return;
                     }
+                }
+                if (!clipboard.types.length && wbClipboard.length) {
+                    event.preventDefault();
+                    wbPasteSelection(wbClipboard);
                 }
             });
 
@@ -7333,8 +7765,7 @@
                 if (!wbCurrentNotebookId) return;
                 wbShiftPressed = e.shiftKey;
 
-                const editor = document.getElementById('wb-inline-text-editor');
-                if (editor && !editor.classList.contains('hidden')) return;
+                if (isTextEditing(e)) return;
 
                 if (e.key === 'F11') {
                     e.preventDefault();
@@ -7358,7 +7789,7 @@
                 } else if (e.key === 'Escape') {
                     e.preventDefault();
                     wbCloseAllDropdowns();
-                    if (wbSelectedIndices.size > 0) {
+                    if (wbSelectedIndices.size > 0 || wbTriangleDraft.length) {
                         wbClearSelection();
                         wbRedrawCanvas();
                     }
@@ -7373,11 +7804,12 @@
                     wbResetView();
                 } else if (ctrlOrMeta && key === 'z') {
                     e.preventDefault();
+                    if (e.repeat) return;
                     if (e.shiftKey) wbRedo();
                     else wbUndo();
                 } else if (ctrlOrMeta && key === 'y') {
                     e.preventDefault();
-                    wbRedo();
+                    if (!e.repeat) wbRedo();
                 } else if (ctrlOrMeta && key === 'a') {
                     e.preventDefault();
                     const page = wbGetCurrentPage();
@@ -7390,29 +7822,7 @@
                     }
                 } else if (ctrlOrMeta && key === 'd' && wbSelectedIndices.size > 0) {
                     e.preventDefault();
-                    const page = wbGetCurrentPage();
-                    if (page) {
-                        const maxH = wbGetCanvasLogicalHeight(page);
-                        const newSet = new Set();
-                        wbSelectedIndices.forEach(idx => {
-                            const orig = page.strokes[idx];
-                            if (!orig) return;
-                            const copy = JSON.parse(JSON.stringify(orig));
-                            if (copy.points) copy.points.forEach(p => { p.x = Math.min(WB_PAGE_W - 10, p.x + 24); p.y = Math.min(maxH - 10, p.y + 24); });
-                            if (copy.x1 !== undefined) copy.x1 = Math.min(WB_PAGE_W - 10, copy.x1 + 24);
-                            if (copy.y1 !== undefined) copy.y1 = Math.min(maxH - 10, copy.y1 + 24);
-                            if (copy.x2 !== undefined) copy.x2 = Math.min(WB_PAGE_W - 10, copy.x2 + 24);
-                            if (copy.y2 !== undefined) copy.y2 = Math.min(maxH - 10, copy.y2 + 24);
-                            page.strokes.push(copy);
-                            newSet.add(page.strokes.length - 1);
-                        });
-                        wbSelectedIndices = newSet;
-                        wbUpdateDeleteBtnVisibility();
-                        wbSyncPageControls();
-                        wbRedrawCanvas();
-                        wbScheduleSave();
-                        showToast('Zduplikowano zaznaczone elementy.', 'info');
-                    }
+                    if (!e.repeat) wbPasteSelection(wbGetSelectedStrokes(wbGetCurrentPage()));
                 }
             });
 
@@ -7440,22 +7850,34 @@
             exportSectionsToPDF(nb.studentName, nb.sections, `Notatnik_${nb.studentName}`);
         }
 
-        function exportSectionsToPDF(studentName, sections, fileNameBase) {
+        async function exportSectionsToPDF(studentName, sections, fileNameBase) {
             if (!window.jspdf || !window.jspdf.jsPDF) {
                 showToast('Biblioteka PDF jeszcze się ładuje, spróbuj za chwilę.', 'error');
                 return;
             }
 
             const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+            const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
             const pageW = pdf.internal.pageSize.getWidth();
             const pageH = pdf.internal.pageSize.getHeight();
 
             const headerH = 44;
             const offCanvas = document.createElement('canvas');
-            offCanvas.width = WB_PAGE_W;
-            offCanvas.height = WB_PAGE_H + headerH;
-            const ctx = offCanvas.getContext('2d');
+            const printScale = 3;
+            offCanvas.width = WB_PAGE_W * printScale;
+            offCanvas.height = (WB_PAGE_H + headerH) * printScale;
+            const ctx = offCanvas.getContext('2d', {alpha: false});
+            ctx.scale(printScale, printScale);
+            ctx.imageSmoothingQuality = 'high';
+
+            const pictures = new Set();
+            for (const section of sections) {
+                normalizeSectionToContinuousPage(section);
+                for (const stroke of section.pages[0].strokes) {
+                    if (stroke.type === 'image' && stroke.src) pictures.add(stroke.src);
+                }
+            }
+            await Promise.all([...pictures].map(src => wbLoadImage(src).decode().catch(() => {})));
 
             let isFirstPdfPage = true;
 
@@ -7498,7 +7920,7 @@
 
                     ctx.restore();
 
-                    const imgData = offCanvas.toDataURL('image/jpeg', 0.94);
+                    const image = offCanvas.toDataURL('image/png');
                     const margin = 4;
                     const availW = pageW - margin * 2;
                     const availH = pageH - margin * 2;
@@ -7511,7 +7933,7 @@
                     }
                     const drawX = (pageW - drawW) / 2;
                     const drawY = (pageH - drawH) / 2;
-                    pdf.addImage(imgData, 'JPEG', drawX, drawY, drawW, drawH);
+                    pdf.addImage(image, 'PNG', drawX, drawY, drawW, drawH, undefined, 'FAST');
                 }
             });
 
@@ -7528,19 +7950,13 @@
                 try {
                     const parsed = JSON.parse(e.newValue);
                     isSyncingFromCloud = true;
-                    state = {
+                    wbApplySyncedState({
                         ...defaultState,
                         ...parsed,
                         settings: { ...defaultState.settings, ...(parsed.settings || {}) }
-                    };
+                    }, true, true);
                     isSyncingFromCloud = false;
-                    if (wbCurrentNotebookId) {
-                        wbPopulateSectionDropdown();
-                        wbSyncPageControls();
-                        wbRedrawCanvas();
-                    } else {
-                        renderCurrentView();
-                    }
+                    if (!wbCurrentNotebookId) renderCurrentView();
                 } catch (err) {
                     isSyncingFromCloud = false;
                 }
