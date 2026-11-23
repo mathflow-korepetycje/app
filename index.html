@@ -265,7 +265,7 @@
 
                 <!-- Kategoria 2: Przybory do pisania (Pisak, Marker, Rozwijana Gumka, Laser) -->
                 <div class="flex items-center gap-0.5 bg-zinc-900 border border-zinc-800 p-0.5 rounded-xl">
-                    <button onclick="wbSetTool('pen')" data-wb-tool="pen" class="wb-tool-btn px-2.5 h-8 rounded-lg text-xs font-semibold flex items-center gap-1.5 bg-zinc-700 text-white ring-1 ring-purple-400 transition-all" title="Pisak (przytrzymaj na końcu, aby zamienić w kształt)">
+                    <button onclick="wbSetTool('pen')" data-wb-tool="pen" class="wb-tool-btn px-2.5 h-8 rounded-lg text-xs font-semibold flex items-center gap-1.5 bg-zinc-700 text-white ring-1 ring-purple-400 transition-all" title="Pisak. Przytrzymaj, aby rozpoznać kształt, i przeciągnij bez odrywania, aby go przeskalować lub obrócić.">
                         <i class="fa-solid fa-pen text-xs"></i>
                         <span class="hidden sm:inline">Pisak</span>
                     </button>
@@ -333,7 +333,7 @@
                             <button onclick="wbPickShape('circle', 'fa-regular fa-circle')" class="p-2 rounded-lg hover:bg-zinc-800 flex flex-col items-center gap-1 text-[11px] text-zinc-200">
                                 <i class="fa-regular fa-circle text-sm text-purple-300"></i> Okrąg
                             </button>
-                            <button onclick="wbPickShape('triangle', 'fa-solid fa-play -rotate-90')" title="Wskaż trzy wierzchołki trójkąta" class="p-2 rounded-lg hover:bg-zinc-800 flex flex-col items-center gap-1 text-[11px] text-zinc-200">
+                            <button onclick="wbPickShape('triangle', 'fa-solid fa-play -rotate-90')" title="Wskaż trzy wierzchołki. Shift przyciąga kierunek boku co 15°." class="p-2 rounded-lg hover:bg-zinc-800 flex flex-col items-center gap-1 text-[11px] text-zinc-200">
                                 <i class="fa-solid fa-play -rotate-90 text-sm text-purple-300"></i> Trójkąt
                             </button>
                         </div>
@@ -4643,7 +4643,7 @@
         let wbActivePointerId = null;
         let wbActiveStroke = null;
         let wbHoldShapeTimer = null;
-        let wbHoldConvertedShape = false;
+        let wbHeldShape = null;
         let wbLastMoveTime = 0;
         let wbLastMovePoint = null;
         let wbLastShapeCheck = 0;
@@ -5506,7 +5506,7 @@
             }
             wbSetTool(shapeType);
             wbCloseAllDropdowns();
-            if (shapeType === 'triangle') showToast('Kliknij kolejno trzy wierzchołki trójkąta.', 'info');
+            if (shapeType === 'triangle') showToast('Wskaż trzy wierzchołki. Przytrzymaj Shift, aby przyciągać boki co 15°.', 'info');
         }
 
         // ==================== WIDOK, ZOOM (+ / - / CTRL+SCROLL) I CIĄGŁE PRZEWIJANIE W DÓŁ ====================
@@ -6132,6 +6132,15 @@
                     maxY: s.y1 + (lines.length - 1) * lineHeight + 8
                 };
             }
+            if (s.type === 'circle' && s.rotation) {
+                const ellipse = wbGetEllipseGeometry(s);
+                const c = Math.cos(ellipse.rotation), d = Math.sin(ellipse.rotation);
+                const pad = (s.width || 3) + 4;
+                const horizontal = Math.hypot(ellipse.rx * c, ellipse.ry * d) + pad;
+                const vertical = Math.hypot(ellipse.rx * d, ellipse.ry * c) + pad;
+                return {minX:ellipse.x - horizontal, maxX:ellipse.x + horizontal,
+                    minY:ellipse.y - vertical, maxY:ellipse.y + vertical};
+            }
             const x1 = Number(s.x1) || 0;
             const y1 = Number(s.y1) || 0;
             const x2 = s.x2 !== undefined ? Number(s.x2) : x1;
@@ -6311,7 +6320,13 @@
             let newW = Math.max(12, newMaxX - newMinX);
             let newH = Math.max(12, newMaxY - newMinY);
 
-            if (keepAspect) {
+            const hasRotatedShape = [...wbResizeOrigStrokes.values()].some(shape => {
+                if (shape.type === 'circle') return Boolean(shape.rotation);
+                if (shape.type !== 'rect' || (shape.vertices?.length || 0) < 2) return false;
+                const [a, b] = shape.vertices;
+                return Math.min(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) > 0.5;
+            });
+            if (keepAspect || hasRotatedShape) {
                 const ratio = origW / origH;
                 if (h === 'n' || h === 's') {
                     newW = newH * ratio;
@@ -6322,7 +6337,7 @@
                     newMinY = anchorY - newH / 2;
                     newMaxY = anchorY + newH / 2;
                 } else {
-                    const uniformScale = Math.max(newW / origW, newH / origH);
+                    const uniformScale = (newW * origW + newH * origH) / (origW ** 2 + origH ** 2);
                     newW = origW * uniformScale;
                     newH = origH * uniformScale;
                     if (h.includes('w')) { newMaxX = anchorX; newMinX = anchorX - newW; }
@@ -6636,7 +6651,7 @@
             const gap = distance(first, last);
             const deviation = (point, a, b) => wbDistanceToSegment(point.x, point.y, a.x, a.y, b.x, b.y);
 
-            if (gap / length > 0.94 && points.every(point => deviation(point, first, last) <= Math.max(2 / wbZoom, gap * 0.045))) {
+            if (gap / length > 0.88 && points.every(point => deviation(point, first, last) <= Math.max(3 / wbZoom, gap * 0.065))) {
                 const angle = Math.atan2(last.y - first.y, last.x - first.x);
                 const nearlyHorizontal = Math.abs(Math.sin(angle)) < 0.075;
                 const nearlyVertical = Math.abs(Math.cos(angle)) < 0.075;
@@ -6644,7 +6659,7 @@
                     x2: nearlyVertical ? first.x : last.x, y2: nearlyHorizontal ? first.y : last.y };
             }
 
-            if (points.length < 4 || gap > Math.max(8 / wbZoom, diagonal * 0.23) || Math.min(width, height) * wbZoom < 10) return null;
+            if (points.length < 4 || gap > Math.max(10 / wbZoom, diagonal * 0.34) || Math.min(width, height) * wbZoom < 10) return null;
 
             // Zacznij upraszczanie zamkniętego konturu od dwóch odległych od siebie punktów.
             const farthest = (from) => points.reduce((best, point, index) =>
@@ -6674,7 +6689,7 @@
                 return keep.sort((a, b) => a - b).map(index => side[index]);
             };
 
-            for (const fraction of [0.035, 0.052, 0.07]) {
+            for (const fraction of [0.035, 0.052, 0.07, 0.095]) {
                 const tolerance = diagonal * fraction;
                 const vertices = simplify(sideA, tolerance).slice(0, -1).concat(simplify(sideB, tolerance).slice(0, -1));
                 // Początek uproszczenia może wypaść w środku boku.
@@ -6689,18 +6704,25 @@
                     return {x: next.x - point.x, y: next.y - point.y, length: distance(next, point)};
                 });
                 if (edges.some(edge => edge.length < diagonal * 0.12)) continue;
-                const fit = points.every(point => vertices.some((corner, index) =>
-                    deviation(point, corner, vertices[(index + 1) % vertices.length]) <= diagonal * 0.06));
+                let closePoints = 0;
+                let widestDeviation = 0;
+                for (const point of points) {
+                    const error = Math.min(...vertices.map((corner, index) =>
+                        deviation(point, corner, vertices[(index + 1) % vertices.length])));
+                    if (error <= diagonal * 0.075) closePoints++;
+                    widestDeviation = Math.max(error, widestDeviation);
+                }
                 const perimeter = edges.reduce((sum, edge) => sum + edge.length, 0);
-                if (!fit || length + gap > perimeter * 1.24) continue;
+                if (closePoints < points.length * 0.88 || widestDeviation > diagonal * 0.125 ||
+                    length + gap > perimeter * 1.34 || length < perimeter * 0.73) continue;
                 if (vertices.length === 3) {
                     const [a, b] = edges;
-                    if (Math.abs(a.x * b.y - a.y * b.x) > diagonal ** 2 * 0.065) return {type:'triangle', vertices};
+                    if (Math.abs(a.x * b.y - a.y * b.x) > diagonal ** 2 * 0.052) return {type:'triangle', vertices};
                     continue;
                 }
                 const orthogonal = edges.every((edge, index) => {
                     const next = edges[(index + 1) % 4];
-                    return Math.abs(edge.x * next.x + edge.y * next.y) < 0.33 * edge.length * next.length;
+                    return Math.abs(edge.x * next.x + edge.y * next.y) < 0.41 * edge.length * next.length;
                 });
                 if (orthogonal) {
                     const angle = Math.atan2(edges[0].y - edges[2].y, edges[0].x - edges[2].x);
@@ -6728,8 +6750,8 @@
                 }
                 previousAngle = angle;
             });
-            if (points.length >= 8 && error / points.length < 0.13 &&
-                Math.abs(turn) > 5.3 && Math.abs(turn) < 7 && totalTurn < 8) {
+            if (points.length >= 8 && error / points.length < 0.17 &&
+                Math.abs(turn) > 4.9 && Math.abs(turn) < 7 && totalTurn < Math.abs(turn) + 1.25) {
                 const radius = (rx + ry) / 2;
                 const nearlyRound = Math.abs(rx - ry) < radius * 0.18;
                 return {type:'circle', x1: cx - (nearlyRound ? radius : rx), y1: cy - (nearlyRound ? radius : ry),
@@ -6738,9 +6760,75 @@
             return null;
         }
 
-        function wbAddTriangleVertex(point) {
+        function wbGetEllipseGeometry(shape) {
+            return {
+                x: (shape.x1 + shape.x2) / 2,
+                y: (shape.y1 + shape.y2) / 2,
+                rx: Math.max(1, Math.abs(shape.x2 - shape.x1) / 2),
+                ry: Math.max(1, Math.abs(shape.y2 - shape.y1) / 2),
+                rotation: shape.rotation || 0
+            };
+        }
+
+        function wbSnapAngle15(angle) {
+            const step = Math.PI / 12;
+            return Math.round(angle / step) * step;
+        }
+
+        function wbAdjustHeldShape(gesture, point, snapAngle) {
+            const {shape, pivot, end} = gesture;
+            if (Math.hypot(point.x - end.x, point.y - end.y) * wbZoom < 3) return shape;
+
+            const startX = end.x - pivot.x, startY = end.y - pivot.y;
+            const dx = point.x - pivot.x, dy = point.y - pivot.y;
+            const radius = Math.hypot(dx, dy);
+            const startRadius = Math.max(4 / wbZoom, Math.hypot(startX, startY));
+            const scale = Math.max(0.18, radius / startRadius);
+            let angle = Math.atan2(dy, dx) - Math.atan2(startY, startX);
+            if (snapAngle) angle = wbSnapAngle15(angle);
+            const c = Math.cos(angle) * scale, d = Math.sin(angle) * scale;
+            const transform = ({x, y}) => ({
+                x: pivot.x + (x - pivot.x) * c - (y - pivot.y) * d,
+                y: pivot.y + (x - pivot.x) * d + (y - pivot.y) * c
+            });
+
+            if (shape.vertices) return {...shape, vertices: shape.vertices.map(transform)};
+            if (shape.type === 'circle') {
+                const ellipse = wbGetEllipseGeometry(shape);
+                const center = transform(ellipse);
+                const rx = ellipse.rx * scale, ry = ellipse.ry * scale;
+                return {...shape, x1:center.x - rx, y1:center.y - ry, x2:center.x + rx, y2:center.y + ry,
+                    rotation:ellipse.rotation + angle};
+            }
+            const start = transform({x:shape.x1, y:shape.y1});
+            const finish = transform({x:shape.x2, y:shape.y2});
+            return {...shape, x1:start.x, y1:start.y, x2:finish.x, y2:finish.y};
+        }
+
+        function wbGetTriangleVertex(point, snapAngle) {
+            if (!snapAngle || !wbTriangleDraft.length) return point;
+            const anchor = wbTriangleDraft[wbTriangleDraft.length - 1];
+            const dx = point.x - anchor.x, dy = point.y - anchor.y;
+            const angle = wbSnapAngle15(Math.atan2(dy, dx));
+            const xDirection = Math.cos(angle), yDirection = Math.sin(angle);
+            const height = wbGetCanvasLogicalHeight(wbGetCurrentPage());
+
+            // Przy krawędzi skróć bok wzdłuż wybranego kierunku, aby zachować kąt.
+            const maxDistance = (position, direction, limit) => {
+                if (Math.abs(direction) < 1e-10) return Infinity;
+                return ((direction > 0 ? limit : 0) - position) / direction;
+            };
+            const distance = Math.min(Math.hypot(dx, dy),
+                maxDistance(anchor.x, xDirection, WB_PAGE_W),
+                maxDistance(anchor.y, yDirection, height));
+            return {x: anchor.x + xDirection * distance, y: anchor.y + yDirection * distance};
+        }
+
+        function wbAddTriangleVertex(rawPoint, snapAngle) {
             const page = wbGetCurrentPage();
-            if (!page || wbTriangleDraft.some(vertex => Math.hypot(vertex.x - point.x, vertex.y - point.y) * wbZoom < 4)) return;
+            if (!page) return;
+            const point = wbGetTriangleVertex(rawPoint, snapAngle);
+            if (wbTriangleDraft.some(vertex => Math.hypot(vertex.x - point.x, vertex.y - point.y) * wbZoom < 4)) return;
             if (wbTriangleDraft.length === 2) {
                 const [a, b] = wbTriangleDraft;
                 const height = Math.abs((b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)) / Math.hypot(b.x - a.x, b.y - a.y);
@@ -6947,12 +7035,9 @@
             } else if (s.type === 'rect') {
                 ctx.strokeRect(s.x1, s.y1, s.x2 - s.x1, s.y2 - s.y1);
             } else if (s.type === 'circle') {
-                const cx = (s.x1 + s.x2) / 2;
-                const cy = (s.y1 + s.y2) / 2;
-                const rx = Math.abs(s.x2 - s.x1) / 2;
-                const ry = Math.abs(s.y2 - s.y1) / 2;
+                const {x, y, rx, ry, rotation} = wbGetEllipseGeometry(s);
                 ctx.beginPath();
-                ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+                ctx.ellipse(x, y, rx, ry, rotation, 0, Math.PI * 2);
                 ctx.stroke();
             } else if (s.type === 'triangle') {
                 const topX = (s.x1 + s.x2) / 2;
@@ -7065,8 +7150,11 @@
                 ctx.beginPath();
                 ctx.moveTo(wbTriangleDraft[0].x, wbTriangleDraft[0].y);
                 for (const point of wbTriangleDraft.slice(1)) ctx.lineTo(point.x, point.y);
-                if (wbTriangleTip) ctx.lineTo(wbTriangleTip.x, wbTriangleTip.y);
-                if (wbTriangleDraft.length === 2 && wbTriangleTip) ctx.closePath();
+                if (wbTriangleTip) {
+                    const tip = wbGetTriangleVertex(wbTriangleTip, wbShiftPressed);
+                    ctx.lineTo(tip.x, tip.y);
+                    if (wbTriangleDraft.length === 2) ctx.closePath();
+                }
                 ctx.stroke();
                 for (const point of wbTriangleDraft) {
                     ctx.beginPath();
@@ -7233,18 +7321,24 @@
 
             const startHoldShapeWatcher = () => {
                 clearInterval(wbHoldShapeTimer);
-                wbHoldConvertedShape = false;
+                wbHeldShape = null;
                 wbLastShapeCheck = 0;
                 wbHoldShapeTimer = setInterval(() => {
-                    if (!wbIsDrawing || !wbAutoShape || wbHoldConvertedShape) return;
+                    if (!wbIsDrawing || !wbAutoShape || wbHeldShape) return;
                     const stroke = wbActiveStroke;
                     if (!stroke?.points || stroke.points.length < 2 || wbLastShapeCheck === stroke.points.length ||
-                        Date.now() - wbLastMoveTime < 420) return;
+                        Date.now() - wbLastMoveTime < 400) return;
                     wbLastShapeCheck = stroke.points.length;
                     const recognized = recognizeHandDrawnShape(stroke.points);
                     if (recognized) {
-                        wbHoldConvertedShape = true;
-                        wbActiveStroke = {...recognized, color:stroke.color, width:stroke.width, alpha:stroke.alpha};
+                        const shape = {...recognized, color:stroke.color, width:stroke.width, alpha:stroke.alpha};
+                        const box = wbGetStrokeBBox(shape);
+                        const pivot = shape.type === 'line' ? {x:shape.x1, y:shape.y1} :
+                            {x:(box.minX + box.maxX) / 2, y:(box.minY + box.maxY) / 2};
+                        const end = stroke.points[stroke.points.length - 1];
+                        wbHeldShape = {shape, pivot, end};
+                        wbActiveStroke = shape;
+                        clearInterval(wbHoldShapeTimer);
                         wbRedrawCanvas();
                     }
                 }, 90);
@@ -7265,6 +7359,7 @@
                         wbIsDrawing = false;
                         if (!wbActiveStroke && wbRecordHistory(wbGetCurrentPage())) wbScheduleSave();
                         wbActiveStroke = null;
+                        wbHeldShape = null;
                         wbActivePointerId = null;
                         const pts = Array.from(wbActiveTouchPointers.values());
                         const rect = canvas.getBoundingClientRect();
@@ -7562,7 +7657,13 @@
                     return;
                 }
 
-                if (!wbActiveStroke || wbHoldConvertedShape) return;
+                if (!wbActiveStroke) return;
+
+                if (wbHeldShape) {
+                    wbActiveStroke = wbAdjustHeldShape(wbHeldShape, {x, y}, wbShiftPressed);
+                    wbRequestInkFrame();
+                    return;
+                }
 
                 if (wbActiveStroke.points) {
                     const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
@@ -7581,7 +7682,7 @@
                             height = wbGetCanvasLogicalHeight(page);
                         }
                         points.push({x, y});
-                        if (Math.hypot(x - wbLastMovePoint.x, y - wbLastMovePoint.y) * wbZoom > 1.25) {
+                        if (Math.hypot(x - wbLastMovePoint.x, y - wbLastMovePoint.y) * wbZoom > 2.2) {
                             wbLastMoveTime = Date.now();
                             wbLastMovePoint = {x, y};
                         }
@@ -7612,7 +7713,9 @@
                     trianglePointer = null;
                     if (wbTool === 'triangle' && e.type === 'pointerup') {
                         const {sx, sy, x, y, insidePage} = getWorldCoords(e);
-                        if (insidePage && Math.hypot(sx - start.sx, sy - start.sy) < 10) wbAddTriangleVertex({x, y});
+                        if (insidePage && Math.hypot(sx - start.sx, sy - start.sy) < 10) {
+                            wbAddTriangleVertex({x, y}, e.shiftKey);
+                        }
                     }
                     return;
                 }
@@ -7660,17 +7763,21 @@
 
                 const page = wbGetCurrentPage();
                 if (page) {
-                    if (e?.type === 'pointerup' && wbActiveStroke.points) {
+                    if (e?.type === 'pointerup') {
                         const {x, y} = getWorldCoords(e);
-                        const last = wbActiveStroke.points[wbActiveStroke.points.length - 1];
-                        if (Math.hypot(x - last.x, y - last.y) * wbZoom >= 0.3) wbActiveStroke.points.push({x, y});
+                        if (wbHeldShape) {
+                            wbActiveStroke = wbAdjustHeldShape(wbHeldShape, {x, y}, e.shiftKey);
+                        } else if (wbActiveStroke.points) {
+                            const last = wbActiveStroke.points[wbActiveStroke.points.length - 1];
+                            if (Math.hypot(x - last.x, y - last.y) * wbZoom >= 0.3) wbActiveStroke.points.push({x, y});
+                        }
                     }
                     const finalStroke = wbActiveStroke;
                     if (!finalStroke.points && !finalStroke.vertices) {
                         const dist = Math.hypot((finalStroke.x2 ?? finalStroke.x1) - finalStroke.x1, (finalStroke.y2 ?? finalStroke.y1) - finalStroke.y1);
                         if (dist < 4) {
                             wbActiveStroke = null;
-                            wbHoldConvertedShape = false;
+                            wbHeldShape = null;
                             wbRedrawCanvas();
                             return;
                         }
@@ -7681,7 +7788,7 @@
                     wbScheduleSave();
                 }
                 wbActiveStroke = null;
-                wbHoldConvertedShape = false;
+                wbHeldShape = null;
                 wbRedrawCanvas();
             };
 
@@ -7761,9 +7868,16 @@
                 }
             });
 
+            const updateShiftKey = (event) => {
+                const pressed = Boolean(event.shiftKey);
+                const changed = wbShiftPressed !== pressed;
+                wbShiftPressed = pressed;
+                if (changed && wbTool === 'triangle' && wbTriangleTip) wbRedrawCanvas();
+            };
+
             window.addEventListener('keydown', (e) => {
                 if (!wbCurrentNotebookId) return;
-                wbShiftPressed = e.shiftKey;
+                updateShiftKey(e);
 
                 if (isTextEditing(e)) return;
 
@@ -7827,7 +7941,7 @@
             });
 
             window.addEventListener('keyup', (e) => {
-                wbShiftPressed = e.shiftKey;
+                updateShiftKey(e);
                 if (e.code === 'Space') {
                     wbSpacePressed = false;
                     wbUpdateCursorForTool(wbTool);
